@@ -10,9 +10,6 @@ from datetime import datetime
 import simplejson as json
 import dirtools
 from pyrsync import pyrsync
-import seccure
-
-CURVE = 'secp256r1/nistp256'
 
 log = logging.getLogger('incremental_backups_tools')
 
@@ -275,80 +272,3 @@ def apply_diff(base_path, diff_index, diff_archive):
             os.rmdir(abspath)
 
     tar.close()
-
-
-# TODO gerer les symlinks
-# TODO voir deux patchs de suite => unit test
-# TODO reflechir a l'encyption avec seccure
-
-"""
-
-d1 = dirtools.Dir('/work/test_dirtools')
-di1 = DirIndex(d1).data()
-
-d2 = dirtools.Dir('/work/test_dirtools2')
-di2 = DirIndex(d2).data()
-
-#from pprint import pprint
-diff_index = DiffIndex(di2, di1).compute()
-print diff_index
-
-DiffData(diff_index).create_archive()
-#pprint(json.loads(open('/tmp/omg.json').read()))
-
-# TODO
-# * Identifiant DiffData
-# * Comment connaitre le last full ?
-d1 = dirtools.Dir('/work/test_dirtools')
-di1 = DirIndex(d1).data()
-
-d2 = dirtools.Dir('/work/test_dirtools2')
-di2 = DirIndex(d2).data()
-
-#from pprint import pprint
-diff_index = DiffIndex(di2, di1).compute()
-#print diff_index
-
-base_path = diff_index['dir_index']['directory']
-base_path = '/work/test_dirtools'
-
-"""
-
-#index_name = '{0}_index'.format(get_hash('/work/test_dirtools'))
-#index_filename = generate_filename(index_name, with_date=False)
-#print di1.to_file(index_filename)
-#index1 = DirIndex.from_file(index_filename)
-
-'''
-directory = '/work/test_dirtools'
-d1 = dirtools.Dir('/work/test_dirtools')
-di1 = DirIndex(d1)
-index1 = di1.data()
-
-# => index1 vide, ou récuperer le dernier
-
-d2 = dirtools.Dir(directory)
-di2 = DirIndex(d2)
-index2 = di2.data()
-
-diff_index = DiffIndex(index2, index1)
-
-# => moyen clean de dumper et récupérer le diff_index
-
-archive_path = '/tmp/archiveomg.tgz'
-DiffData(diff_index.compute()).create_archive(archive_path)
-
-# Moyen class de réstorer
-
-apply_diff(diff_index.compute, archive_path)
-'''
-
-#print generate_filename("test_dirtools_index")
-# TODO trouver un moyen clean de gerer les dumps
-# TODO faire un enchainement facile des trucs
-# TODO voir ou duplicity gere son cache, faire pareil.
-# TODO voir lintegration dans Dirtools ou un autre package ?
-# README storage agnostic incremental backup tool
-#       don't split big files.
-#       
-# incremental-backup-tool => incremental_backup_tool

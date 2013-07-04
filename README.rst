@@ -2,12 +2,12 @@
  Incremental-Backups-Tools
 ===========================
 
-Storage agnostic incremental backups tools, building blocks for creating incremental backups utility.
+Storage agnostic incremental backups tools, building blocks for creating incremental backups utilities.
 
 * Use `pyrsync <https://pypi.python.org/pypi/pyrsync>`_ (a pure Python rsync implementation with SHA256 hash) to compute patch/diff.
 * Rely on `dirtools <https://github.com/tsileo/dirtools>`_ (for .gitignore like exlusion, and helpers it provides) 
 
-This is initially designed as a foundation for `bakthat <http://docs.bakthat.io>`_ incremental backups plugin, so, implementation of signature, encryption, storage, management of full backups and diff is up to you.
+This project is initially designed as a foundation for `bakthat <http://docs.bakthat.io>`_ incremental backups plugin, so the implementation of features like signature, encryption, storage, management of full/incremental backups is up to you.
 
 Components
 ==========
@@ -69,8 +69,8 @@ Usage
     from incremental_backups_tools import DirIndex, DiffIndex, DiffData, apply_diff
     from dirtools import Dir
 
-    dir = Dir('/home/thomas/mydir')
-    DirIndex(dir).to_file('/home/thomas/mydir.index')
+    d = Dir('/home/thomas/mydir')
+    DirIndex(d).to_file('/home/thomas/mydir.index')
 
     # Store the index
 
@@ -78,7 +78,7 @@ Usage
 
     # Make some changes in the directory
 
-    dir_index_data = DirIndex(dir).data()
+    dir_index_data = DirIndex(d).data()
     diff_index = DiffIndex(dir_index_data, old_dir_index_data).compute()
     diff_archive = DiffData(diff_index).create_archive('/home/thomas/mydir.diff.tgz')
 
