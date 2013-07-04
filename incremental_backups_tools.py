@@ -184,7 +184,7 @@ class DiffData(DiffBase):
         for delta in self.diff_index['deltas']:
             filename = get_hash(delta['path'])
             arcname = os.path.join('updated/', filename)
-            # delta_path is the path to the tempfile DiffIndex must have created
+            # delta_path is the path to the tmpfile DiffIndex must have created
             tar.add(delta['delta_path'], arcname=arcname)
             os.remove(delta['delta_path'])
 

@@ -17,7 +17,7 @@ setup(
     bugtrack_url="https://github.com/tsileo/incremental-backups-tools/issues",
     py_modules=["incremental_backups_tools"],
     long_description=read("README.rst"),
-    install_requires=["dirtools"],
+    install_requires=["dirtools", "pyrsync"],
     tests_require=["pyfakefs"],
     test_suite="test_incremental_backups_tools",
     classifiers=[
