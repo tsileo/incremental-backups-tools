@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import tarfile
 import hashlib
-from tempfile import NamedTemporaryFile
 import shutil
 import tempfile
 import os
@@ -136,7 +135,7 @@ class DiffIndex(DiffBase):
                              f), 'rb')
 
                 # We store the delta in a temporary file, the file will be deleted when stored in the archives.
-                delta_tmp = NamedTemporaryFile(delete=False)
+                delta_tmp = tempfile.NamedTemporaryFile(delete=False)
                 delta_tmp.write(json.dumps(pyrsync.rsyncdelta(f_abs, self.cmp_index['index'][f])))
                 data['deltas'].append({'path': f, 'delta_path': delta_tmp.name})
                 data['updated'].append(f)
