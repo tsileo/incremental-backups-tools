@@ -6,6 +6,7 @@ dist/
 .sass-cache
 .DS_Store
 *tar.gz
+*.json
 *.zip
 .pypirc
 *wip.py
