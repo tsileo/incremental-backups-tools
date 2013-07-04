@@ -5,6 +5,7 @@ from tempfile import NamedTemporaryFile
 import shutil
 import tempfile
 import os
+import logging
 from datetime import datetime
 
 import simplejson as json
@@ -14,32 +15,42 @@ import seccure
 
 CURVE = 'secp256r1/nistp256'
 
+log = logging.getLogger('incremental_backups_tools')
+
 
 def get_hash(val):
     """ Helper for generating path hash. """
     return hashlib.sha256(val).hexdigest()
 
 
-def generate_filename(filename, ext="json"):
+def generate_filename(filename, with_date=True, ext="json"):
     """ Helper for generating filename for dump,
 
     >>> generate_filename('mydir_index')
     mydir_index.2013-07-03-22-20-58.json
 
     """
-    ts = datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
-    return '{0}.{1}.{2}'.format(filename, ts, ext)
+    ts = datetime.utcnow().strftime('%Y-%m-%d-%H-%M-%S')
+    if with_date:
+        return '{0}.{1}.{2}'.format(filename, ts, ext)
+    return '{0}.{1}'.format(filename, ext)
 
 
 class DiffBase(object):
-    """ Base object for subclassing,
-        with helpers to load/dump data from/to files. """
+    """ Base class for diff tools.
+
+    With helpers to load/dump data from/to files.
+
+    :type _dir: dirtools.Dir instance
+    :param _dir: Instance dirtools.Dir
+
+    """
     def __init__(self, _dir):
         self._dir = _dir
 
     def file_content(self):
         """ Methods that should return the content for dumping to file. """
-        raise NotImplemented()
+        raise NotImplemented('Must define a content to dump/load.')
 
     @classmethod
     def from_file(cls, filename):
@@ -96,12 +107,19 @@ class DiffIndex(DiffBase):
 
     The diff is needed for patching/restoring.
 
+    :type diff_index: dict
+    :param: diff_index: DiffIndex data for the current version of the directory
+
+    :type cmp_index: dict
+    :param cmp_index: Old DirIndex for computing incremental changes
+
     """
     def __init__(self, dir_index, cmp_index):
         self.dir_index = dir_index
         self.cmp_index = cmp_index
 
     def compute(self):
+        """ Actually compute the DirIndex data. """
         data = {}
         data['dir_index'] = self.dir_index
         data['deleted'] = list(set(self.cmp_index['files']) - set(self.dir_index['files']))
@@ -111,7 +129,8 @@ class DiffIndex(DiffBase):
         data['deltas'] = []
 
         for f in set(self.cmp_index['files']).intersection(set(self.dir_index['files'])):
-            if self.cmp_index['index'][f] != self.dir_index['index'][f]:
+            # We cast the block checksums to list as pyrsync return tuple, and json list
+            if list(self.cmp_index['index'][f]) != list(self.dir_index['index'][f]):
                 # We load the file to generate the delta against the old index
                 f_abs = open(dirtools.os.path.join(self.dir_index['directory'],
                              f), 'rb')
@@ -130,11 +149,18 @@ class DiffIndex(DiffBase):
 
 
 class DiffData(DiffBase):
-    """ Create the archive, just after the index creation, and put everything in a tarfile. """
+    """ Handle the archive creation for the DiffIndex.
+
+    Take the DiffIndex data, and put needed files in an archive.
+
+    :type diff_index: dict
+    :param diff_index: DiffIndex.compute() result
+
+    """
     def __init__(self, diff_index):
         self.diff_index = diff_index
 
-    def create_archive(self):
+    def create_archive(self, archive_path):
         """ Actually create a tgz archive, with two directories:
 
         - created, where the new files are stored.
@@ -142,18 +168,24 @@ class DiffData(DiffBase):
 
         Everything is stored at root, with the hash of the path as filename.
 
-        """
-        tar = tarfile.open('/tmp/testdirtools.tgz', mode='w:gz')  # fileobj=out
+        :type archive_path: str
+        :param archive_path: Path to the archive
 
+        """
+        tar = tarfile.open(archive_path, mode='w:gz')
+
+        # Store the created files in the archive, in the created/ directory
         for created in self.diff_index['created']:
             path = os.path.join(self.diff_index['dir_index']['directory'],
                                 created)
             filename = get_hash(created)
             tar.add(path, arcname=os.path.join('created/', filename))
 
+        # Store the delta in the archive, in the updated/ directory
         for delta in self.diff_index['deltas']:
             filename = get_hash(delta['path'])
             arcname = os.path.join('updated/', filename)
+            # delta_path is the path to the tempfile DiffIndex must have created
             tar.add(delta['delta_path'], arcname=arcname)
             os.remove(delta['delta_path'])
 
@@ -166,10 +198,13 @@ def apply_diff(base_path, diff_index, diff_archive):
     :param diff_index: The DiffIndex data.
     :param diff_archive: The DiffData archive corresponding to the DiffIndex.
 
-    Open the tarfile, and apply the updated, created, deleted, deleted_dirs on base_path.
+    Open the tarfile, and apply the updated, created, deleted,
+    deleted_dirs on base_path.
 
     """
     tar = tarfile.open('/tmp/testdirtools.tgz')
+
+    # First step, we iterate over the updated files
     for updtd in diff_index['updated']:
         try:
             print(updtd)
@@ -177,17 +212,23 @@ def apply_diff(base_path, diff_index, diff_archive):
 
             member = tar.getmember(os.path.join('updated', get_hash(updtd)))
 
+            # Load the pyrsync delta stored in JSON
             delta_file = tar.extractfile(member)
             delta = json.loads(delta_file.read())
             delta_file.close()
 
+            # A tempfile file to store the patched file/result
+            # before replacing the original
             patched = tempfile.NamedTemporaryFile()
 
+            # Patch the current version of the file with the delta
+            # and store the result in the previously created tempfile
             with open(abspath, 'rb') as f:
                 pyrsync.patchstream(f, patched, delta)
 
             patched.seek(0)
 
+            # Now we replace the orignal file with the patched version
             with open(abspath, 'wb') as f:
                 shutil.copyfileobj(patched, f)
 
@@ -195,8 +236,10 @@ def apply_diff(base_path, diff_index, diff_archive):
 
         except KeyError as exc:
             # It means that a file is missing in the archive.
-            print("DIFF CORRUPTED")
+            log.exception(exc)
+            raise Exception("DIFF CORRUPTED")
 
+    # Next, we iterate the created files
     for crtd in diff_index['created']:
         try:
             member = tar.getmember(os.path.join('created', get_hash(crtd)))
@@ -205,22 +248,27 @@ def apply_diff(base_path, diff_index, diff_archive):
             abspath = os.path.join(base_path, crtd)
             dirname = os.path.dirname(abspath)
 
+            # Create directories if they doesn't exist yet
             if not os.path.exists(dirname):
                     os.makedirs(dirname)
 
+            # We copy the file from the archive directly to its destination
             with open(abspath, 'wb') as f:
                 shutil.copyfileobj(src_file, f)
 
         except KeyError as exc:
             # It means that a file is missing in the archive.
-            print("DIFF CORRUPTED")
+            log.exception(exc)
+            raise Exception("DIFF CORRUPTED")
 
+    # Then, we iterate the deleted files
     for dltd in diff_index['deleted']:
         print(dltd)
         abspath = os.path.join(base_path, dltd)
         if os.path.isfile(abspath):
             os.remove(abspath)
 
+    # Finally, we iterate the deleted directories
     for dltd_drs in diff_index['deleted_dirs']:
         print(dltd_drs)
         abspath = os.path.join(base_path, dltd_drs)
@@ -269,9 +317,36 @@ base_path = '/work/test_dirtools'
 
 """
 
+#index_name = '{0}_index'.format(get_hash('/work/test_dirtools'))
+#index_filename = generate_filename(index_name, with_date=False)
+#print di1.to_file(index_filename)
+#index1 = DirIndex.from_file(index_filename)
 
+'''
+directory = '/work/test_dirtools'
+d1 = dirtools.Dir('/work/test_dirtools')
+di1 = DirIndex(d1)
+index1 = di1.data()
 
-print generate_filename("test_dirtools_index")
+# => index1 vide, ou récuperer le dernier
+
+d2 = dirtools.Dir(directory)
+di2 = DirIndex(d2)
+index2 = di2.data()
+
+diff_index = DiffIndex(index2, index1)
+
+# => moyen clean de dumper et récupérer le diff_index
+
+archive_path = '/tmp/archiveomg.tgz'
+DiffData(diff_index.compute()).create_archive(archive_path)
+
+# Moyen class de réstorer
+
+apply_diff(diff_index.compute, archive_path)
+'''
+
+#print generate_filename("test_dirtools_index")
 # TODO trouver un moyen clean de gerer les dumps
 # TODO faire un enchainement facile des trucs
 # TODO voir ou duplicity gere son cache, faire pareil.
