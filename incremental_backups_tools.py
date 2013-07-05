@@ -169,7 +169,6 @@ class DiffData(DiffBase):
 
         """
         tar = tarfile.open(archive_path, mode='w:gz')
-
         # Store the created files in the archive, in the created/ directory
         for created in self.diff_index['created']:
             path = os.path.join(self.diff_index['dir_index']['directory'],
@@ -198,7 +197,7 @@ def apply_diff(base_path, diff_index, diff_archive):
     deleted_dirs on base_path.
 
     """
-    tar = tarfile.open('/tmp/testdirtools.tgz')
+    tar = tarfile.open(diff_archive, mode='r:gz')
 
     # First step, we iterate over the updated files
     for updtd in diff_index['updated']:

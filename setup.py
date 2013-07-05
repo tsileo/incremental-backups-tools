@@ -10,7 +10,7 @@ setup(
     version="0.1.0",
     author="Thomas Sileo",
     author_email="thomas.sileo@gmail.com",
-    description="",
+    description="Storage agnostic incremental backups tools, building blocks for creating incremental backups utilities.",
     license="MIT",
     keywords="incremental backups diff patch rsync",
     url="https://github.com/tsileo/incremental-backups-tools",

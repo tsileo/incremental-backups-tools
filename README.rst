@@ -26,7 +26,7 @@ Next time you perform an incremental backups, this index should be used for crea
 DiffIndex
 ---------
 
-``DiffIndex`` stores the changes between to ``DirIndex``.
+``DiffIndex`` stores the changes between two ``DirIndex``.
 
 It contains:
 
