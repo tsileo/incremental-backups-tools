@@ -4,12 +4,12 @@ import os
 import shutil
 
 import dirtools
-import incremental_backups_tools as ibtools
+import incremental_backups_tools
 
 
-class TestDirtools(unittest.TestCase):
+class TestIncrementalBackupstools(unittest.TestCase):
     def setUp(self):
-        """ Initialize a fake filesystem and dirtools. """
+        """ Initialize directory for testing diff and patch. """
         base_path = '/tmp/test_incremental_backups_tools'
         os.mkdir(base_path)
         with open(os.path.join(base_path, 'file1'), 'w') as f:
@@ -93,7 +93,7 @@ class TestDirtools(unittest.TestCase):
 
     def testDirIndex(self):
         """ Test the DirIndex. """
-        di1 = ibtools.DirIndex(self.dir)
+        di1 = incremental_backups_tools.DirIndex(self.dir)
         index1 = di1.data()
 
         self.assertEqual(index1['directory'], '/tmp/test_incremental_backups_tools')
@@ -107,13 +107,13 @@ class TestDirtools(unittest.TestCase):
                          sorted(keys_expected))
 
     def testDiffIndexWithNoChanges(self):
-        di1 = ibtools.DirIndex(self.dir)
+        di1 = incremental_backups_tools.DirIndex(self.dir)
         index1 = di1.data()
-        di3 = ibtools.DirIndex(self.dir3)
+        di3 = incremental_backups_tools.DirIndex(self.dir3)
         index3 = di3.data()
 
-        diff_index = ibtools.DiffIndex(index3, index1).compute()
-        #diff_index = ibtools.DiffIndex(index2, index1).compute()
+        diff_index = incremental_backups_tools.DiffIndex(index3, index1).compute()
+        #diff_index = incremental_backups_tools.DiffIndex(index2, index1).compute()
 
         # Check that the DirIndex is complete
         self.assertEqual(diff_index['dir_index']['directory'],
@@ -132,12 +132,12 @@ class TestDirtools(unittest.TestCase):
         self.assertEqual(diff_index['deltas'], [])
 
     def testDiffIndexWithChanges(self):
-        di1 = ibtools.DirIndex(self.dir)
+        di1 = incremental_backups_tools.DirIndex(self.dir)
         index1 = di1.data()
-        di2 = ibtools.DirIndex(self.dir2)
+        di2 = incremental_backups_tools.DirIndex(self.dir2)
         index2 = di2.data()
 
-        diff_index = ibtools.DiffIndex(index2, index1).compute()
+        diff_index = incremental_backups_tools.DiffIndex(index2, index1).compute()
 
         self.assertEqual(diff_index['dir_index']['directory'],
                          '/tmp/test_incremental_backups_tools2')
@@ -154,15 +154,15 @@ class TestDirtools(unittest.TestCase):
 
     def testPatchDiff(self):
         self.assertNotEqual(self.dir2.hash(), self.dir.hash())
-        di1 = ibtools.DirIndex(self.dir)
+        di1 = incremental_backups_tools.DirIndex(self.dir)
         index1 = di1.data()
-        di2 = ibtools.DirIndex(self.dir2)
+        di2 = incremental_backups_tools.DirIndex(self.dir2)
         index2 = di2.data()
 
-        diff_index = ibtools.DiffIndex(index2, index1).compute()
+        diff_index = incremental_backups_tools.DiffIndex(index2, index1).compute()
         diff_archive = '/tmp/testpatchdiff.tgz'
-        ibtools.DiffData(diff_index).create_archive(diff_archive)
-        ibtools.apply_diff('/tmp/test_incremental_backups_tools', diff_index, diff_archive)
+        incremental_backups_tools.DiffData(diff_index).create_archive(diff_archive)
+        incremental_backups_tools.apply_diff('/tmp/test_incremental_backups_tools', diff_index, diff_archive)
         os.remove(diff_archive)
 
         self.assertEqual(self.dir2.hash(), self.dir.hash())

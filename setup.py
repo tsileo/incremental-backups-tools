@@ -18,7 +18,7 @@ setup(
     py_modules=["incremental_backups_tools"],
     long_description=read("README.rst"),
     install_requires=["dirtools", "pyrsync"],
-    tests_require=["pyfakefs"],
+    tests_require=[],
     test_suite="test_incremental_backups_tools",
     classifiers=[
         "Development Status :: 4 - Beta",
