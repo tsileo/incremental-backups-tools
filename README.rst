@@ -80,7 +80,8 @@ Usage
 
     dir_index_data = DirIndex(d).data()
     diff_index = DiffIndex(dir_index_data, old_dir_index_data).compute()
-    diff_archive = DiffData(diff_index).create_archive('/home/thomas/mydir.diff.tgz')
+    diff_archive = '/home/thomas/mydir.diff.tgz'
+    DiffData(diff_index).create_archive(diff_archive)
 
     # Reapply these changes from the intial directory
 
