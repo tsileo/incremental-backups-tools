@@ -79,7 +79,7 @@ class DirIndex(DiffBase):
         """ Compute the block checksums for each files (pyrsync algorithm). """
         index = {}
         for f in self._dir.files():
-            with open(os.path.join(self._dir.directory, f), 'rb') as f_h:
+            with open(os.path.join(self._dir.path, f), 'rb') as f_h:
                 index[f] = pyrsync.blockchecksums(f_h)
         return index
 
@@ -123,6 +123,7 @@ class DiffIndex(DiffBase):
         data['updated'] = []
         data['deleted_dirs'] = list(set(self.cmp_index['subdirs']) - set(self.dir_index['subdirs']))
         data['deltas'] = []
+        data['hashdir'] = dirtools.Dir(self.dir_index['directory']).hash()
 
         for f in set(self.cmp_index['files']).intersection(set(self.dir_index['files'])):
             # We cast the block checksums to list as pyrsync return tuple, and json list
@@ -271,3 +272,8 @@ def apply_diff(base_path, diff_index, diff_archive):
             os.rmdir(abspath)
 
     tar.close()
+
+    try:
+        assert dirtools.Dir(base_path).hash() == diff_index['hashdir']
+    except AssertionError:
+        log.error("Diff integrity check failed.")
