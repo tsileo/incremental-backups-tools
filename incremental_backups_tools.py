@@ -235,6 +235,10 @@ class TarVolume(dirtools.Dir):
     def compress(self, volume_size=2 ** 20):
         """ Compress the initialized directory to multi volume gzipped archive.
 
+        Return the list of volumes, and a volume index.
+
+        The volume index map relative filename to volume.
+
         :type volume_size: int
         :param volume_index: Byte size of a single volume
 
@@ -244,29 +248,51 @@ class TarVolume(dirtools.Dir):
         self.volumes.append(archive.name)
         for root, dirs, files in self.walk():
             cdir = os.path.relpath(root, self.path)
+
             for f in files:
+
+                # We add the root if the directory is empty, it won't be created
+                # automatically.
                 if cdir != '.' and not cdir in self.volume_index:
                     tar.add(root, arcname=cdir, recursive=False)
                 if cdir != '.':
-                    self.volume_index[cdir].add(archive.name)
+                    # We also track the volumes where the directory is archived.
+                    self.volume_index[cdir].add(os.path.basename(archive.name))
+
                 absname = os.path.join(root, f)
                 arcname = os.path.relpath(absname, self.parent)
-                self.volume_index[arcname].add(archive.name)
+
+                # Add the file to the volume index
+                self.volume_index[arcname].add(os.path.basename(archive.name))
+
                 archive_size = os.fstat(archive.fileno()).st_size
                 total_size = archive_size + os.path.getsize(absname)
+
+                # If the file size is greater than the volume size,
+                # this volume will contains a single file.
+                # If the current size + next file size is greater than the volume size,
+                # we generate a new volume.
                 if archive_size != 0 and total_size > volume_size:
                     tar.close(), archive.close()
                     tar, archive = volume_generator.next()
                     self.volumes.append(archive.name)
+
+                # Add the file in the archive
                 tar.add(absname, arcname=arcname)
+
         tar.close(), archive.close()
+
+        # Clean up the volume index for a nicer outputs
         self.volume_index = dict(self.volume_index)
         for k, v in self.volume_index.iteritems():
             self.volume_index[k] = list(v)
+
         return self.volumes, self.volume_index
 
     @classmethod
     def from_volumes(cls, volumes, volume_index=None):
+        """ Initialize a TarVolume directory with a custom
+            volumes list (and optionally a custom volume_index). """
         # Extraire juste un dossier ou juste fichier
         _cls = cls('.')
         _cls.volumes = volumes
@@ -283,6 +309,8 @@ class TarVolume(dirtools.Dir):
 
         """
         for v in self.volumes:
+            if not os.path.isabs(v):
+                v = os.path.join(self.path, v)
             tar = tarfile.open(v, 'r:gz')
             tar.extractall(path)
             tar.close()
@@ -299,11 +327,11 @@ class TarVolume(dirtools.Dir):
         """
         if member in self.volume_index:
             # gerer le cas 2 volumes
-            volume = list(self.volume_index[member])[0]
-            tar = tarfile.open(volume, 'r:gz')
-            tar_member = tar.getmember(member)
-            tar.extract(tar_member, path)
-            tar.close()
+            for volume in self.volume_index[member]:
+                tar = tarfile.open(volume, 'r:gz')
+                tar_member = tar.getmember(member)
+                tar.extract(tar_member, path)
+                tar.close()
         else:
             raise IOError('Member not found in the volume.')
 
