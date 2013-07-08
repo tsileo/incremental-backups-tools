@@ -181,8 +181,8 @@ class TestIncrementalBackupstools(unittest.TestCase):
                 expected_hashs[fhh] = dirtools.filehash(fhh)
 
         expected_hash = self.dir4.hash()
-        tar_volume = incremental_backups_tools.TarVolume(self.dir4.path, 'ooomgg')
-        archives, volume_index = tar_volume.compress(volume_size=2 ** 20)
+        tar_volume = incremental_backups_tools.TarVolume(self.dir4.path, volume_size=2 ** 20)
+        archives, volume_index = tar_volume.compress()
 
         self.assertEqual(len(archives), 5)
         #self.assertEqual(sorted(volume_index.keys()), sorted(['test_incremental_backups_tools4/big_file2', 'test_incremental_backups_tools4/big_file3', 'test_incremental_backups_tools4/big_file0', 'test_incremental_backups_tools4/big_file1', 'test_incremental_backups_tools4/file3.py', 'test_incremental_backups_tools4/big_file4', 'test_incremental_backups_tools4/dir1/subdir1/.project', 'test_incremental_backups_tools4/dir2/file_dir2', 'test_incremental_backups_tools4/dir2', 'test_incremental_backups_tools4/dir1/subdir1', 'test_incremental_backups_tools4/.exclude', 'test_incremental_backups_tools4', 'test_incremental_backups_tools4/dir1/subdir1/file_subdir1', 'test_incremental_backups_tools4/file1', 'test_incremental_backups_tools4/file2']))
@@ -194,7 +194,51 @@ class TestIncrementalBackupstools(unittest.TestCase):
         tv = tar_volume.from_volumes(archives, volume_index)
         tv.extractall('/tmp/tibt5')
 
-        
+        #tv.extract('test_incremental_backups_tools4/big_file2', '/tmp')
+        #nf = tv.extractfile('test_incremental_backups_tools4/big_file2')
+
+        # TODO test extraction sous dosser
+        # TODO test extraction fichier
+
+        ndir = dirtools.Dir(os.path.join('/tmp/tibt5/', self.base_path + '4'))
+
+        self.assertEqual(ndir.hash(), expected_hash)
+
+        #tv2 = incremental_backups_tools.TarVolume('/tmp', 'test_incremental_backups_tools4')
+        #print tv2.volumes
+
+        #print os.path.join(self.base_path + '4', 'big_file2')
+        #test_incremental_backups_tools4/big_file2
+
+        shutil.rmtree('/tmp/tibt5')
+
+    def testTarVolume2(self):
+        expected_hashs = {}
+        for i in range(5):
+            with open(os.path.join(self.base_path + '4', 'big_file{0}'.format(i)), 'w') as f:
+                fhh = os.path.join(self.base_path + '4', 'big_file{0}'.format(i))
+                f.write(os.urandom(1 * 2 ** 20))
+                expected_hashs[fhh] = dirtools.filehash(fhh)
+
+        expected_hash = self.dir4.hash()
+        tar_volume = incremental_backups_tools.TarVolume(self.dir4.path, volume_size=2 ** 20)
+        #archives, volume_index = tar_volume.compress()
+
+        for f in self.dir4.files():
+            tar_volume.add(f)
+        tar_volume.close()
+
+        archives = tar_volume.volumes
+        volume_index = tar_volume.volume_index
+        self.assertEqual(len(archives), 5)
+        #self.assertEqual(sorted(volume_index.keys()), sorted(['test_incremental_backups_tools4/big_file2', 'test_incremental_backups_tools4/big_file3', 'test_incremental_backups_tools4/big_file0', 'test_incremental_backups_tools4/big_file1', 'test_incremental_backups_tools4/file3.py', 'test_incremental_backups_tools4/big_file4', 'test_incremental_backups_tools4/dir1/subdir1/.project', 'test_incremental_backups_tools4/dir2/file_dir2', 'test_incremental_backups_tools4/dir2', 'test_incremental_backups_tools4/dir1/subdir1', 'test_incremental_backups_tools4/.exclude', 'test_incremental_backups_tools4', 'test_incremental_backups_tools4/dir1/subdir1/file_subdir1', 'test_incremental_backups_tools4/file1', 'test_incremental_backups_tools4/file2']))
+
+        # Extract all volumes/archives in the same path
+        #incremental_backups_tools.TarVolume.from_volumes('/tmp/tibt5/', archives)
+        #tar_volume.extractall('/tmp/tibt5')
+
+        tv = tar_volume.from_volumes(archives, volume_index)
+        tv.extractall('/tmp/tibt5')
 
         #tv.extract('test_incremental_backups_tools4/big_file2', '/tmp')
         #nf = tv.extractfile('test_incremental_backups_tools4/big_file2')
@@ -206,14 +250,13 @@ class TestIncrementalBackupstools(unittest.TestCase):
 
         self.assertEqual(ndir.hash(), expected_hash)
 
-        tv2 = incremental_backups_tools.TarVolume('/tmp', 'ooomgg')
-        print tv2.volumes
+        #tv2 = incremental_backups_tools.TarVolume('/tmp', 'test_incremental_backups_tools4')
+        #print tv2.volumes
 
         #print os.path.join(self.base_path + '4', 'big_file2')
         #test_incremental_backups_tools4/big_file2
 
         shutil.rmtree('/tmp/tibt5')
-
 
 if __name__ == '__main__':
     unittest.main()

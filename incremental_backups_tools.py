@@ -157,47 +157,6 @@ class DiffIndex(DiffBase):
         return self.compute()
 
 
-class DiffData(DiffBase):
-    """ Handle the archive creation for the DiffIndex.
-
-    Take the DiffIndex data, and put needed files in an archive.
-
-    :type diff_index: dict
-    :param diff_index: DiffIndex.compute() result
-
-    """
-    def __init__(self, diff_index):
-        self.diff_index = diff_index
-
-    def create_archive(self, archive_path):
-        """ Actually create a tgz archive, with two directories:
-
-        - created, where the new files are stored.
-        - updated, contains the pyrsync deltas.
-
-        Everything is stored at root, with the hash of the path as filename.
-
-        :type archive_path: str
-        :param archive_path: Path to the archive
-
-        """
-        tar = tarfile.open(archive_path, mode='w:gz')
-        # Store the created files in the archive, in the created/ directory
-        for created in self.diff_index['created']:
-            path = os.path.join(self.diff_index['dir_index']['directory'],
-                                created)
-            filename = get_hash(created)
-            tar.add(path, arcname=os.path.join('created/', filename))
-
-        # Store the delta in the archive, in the updated/ directory
-        for delta in self.diff_index['deltas']:
-            filename = get_hash(delta['path'])
-            arcname = os.path.join('updated/', filename)
-            # delta_path is the path to the tmpfile DiffIndex must have created
-            tar.add(delta['delta_path'], arcname=arcname)
-            os.remove(delta['delta_path'])
-
-        tar.close()
 
 
 class TarVolume(dirtools.Dir):
@@ -213,13 +172,18 @@ class TarVolume(dirtools.Dir):
     :param volume_index: Volume index (optional when full restore)
 
     """
-    def __init__(self, path, archive_key=None, volume_index=None):
+    def __init__(self, path, archive_key=None, volume_index=None, volume_size=2 ** 20):
         _return = super(TarVolume, self).__init__(path)
+        self.init = False
         self.archive_key = archive_key
+        if self.archive_key is None:
+            self.archive_key = self.directory
         self.volumes = list(self.files('{0}.vol*.tgz'.format(archive_key)))
         self.volume_index = volume_index
         if volume_index is None:
             self.volume_index = collections.defaultdict(set)
+        self.volume_generator = self._volume_generator()
+        self.volume_size = volume_size
         return _return
 
     def _volume_generator(self):
@@ -232,60 +196,101 @@ class TarVolume(dirtools.Dir):
             yield tarfile.open(fileobj=archive, mode='w:gz'), archive
             i += 1
 
-    def compress(self, volume_size=2 ** 20):
+    def _init_archive(self):
+        """ Init the first volume. """
+        if not self.init:
+            self._tar, self._archive = self.volume_generator.next()
+            self.volumes.append(self._archive.name)
+            self.init = True
+
+    def _archive_size(self):
+        """ Return the current volume size. """
+        return os.fstat(self._archive.fileno()).st_size
+
+    def _check_size(self, size):
+        """ Check the size and roll up a new volume/archive if needed.
+
+        :type size: int
+        :pram size: Byte size of the next archive size.
+
+        If the file size is greater than the volume size,
+        this volume will contains a single file.
+        If the current size + next file size is greater than the volume size,
+        we generate a new volume.
+
+        """
+        if self._archive_size() != 0 and size > self.volume_size:
+            self._tar.close(), self._archive.close()
+            self._tar, self._archive = self.volume_generator.next()
+            self.volumes.append(self._archive.name)
+
+    def close(self):
+        """ Must be called once all files have been added. No need to call it with compress. """
+        self._tar.close(), self._archive.close()
+
+        # Clean up the volume index for a nicer outputs
+        self.volume_index = dict(self.volume_index)
+        for k, v in self.volume_index.iteritems():
+            self.volume_index[k] = list(v)
+
+    def add(self, name, arcname=None, recursive=True):
+        """ Add the file the multi-volume archive, handle volumes transparently.
+
+        Works like tarfile.add
+
+        Don't forget to call close after all add calls.
+
+        """
+        self._init_archive()
+        if not os.path.isabs(name):
+            name = os.path.join(self.path, name)
+        if arcname is None:
+            arcname = os.path.relpath(name, self.path)
+
+        total_size = self._archive_size() + os.path.getsize(name)
+        # Check the volume size, and create a new module if needed
+        self._check_size(total_size)
+
+        self._tar.add(name, arcname, recursive=recursive)
+
+        # Add the file to the volume index
+        self.volume_index[arcname].add(os.path.basename(self._archive.name))
+
+    def compress(self):
         """ Compress the initialized directory to multi volume gzipped archive.
 
         Return the list of volumes, and a volume index.
 
         The volume index map relative filename to volume.
 
-        :type volume_size: int
-        :param volume_index: Byte size of a single volume
-
         """
-        volume_generator = self._volume_generator()
-        tar, archive = volume_generator.next()
-        self.volumes.append(archive.name)
+        self._init_archive()
         for root, dirs, files in self.walk():
             cdir = os.path.relpath(root, self.path)
 
             for f in files:
-
                 # We add the root if the directory is empty, it won't be created
                 # automatically.
                 if cdir != '.' and not cdir in self.volume_index:
-                    tar.add(root, arcname=cdir, recursive=False)
+                    self._tar.add(root, arcname=cdir, recursive=False)
                 if cdir != '.':
                     # We also track the volumes where the directory is archived.
-                    self.volume_index[cdir].add(os.path.basename(archive.name))
+                    self.volume_index[cdir].add(os.path.basename(self._archive.name))
 
                 absname = os.path.join(root, f)
                 arcname = os.path.relpath(absname, self.parent)
 
-                # Add the file to the volume index
-                self.volume_index[arcname].add(os.path.basename(archive.name))
-
-                archive_size = os.fstat(archive.fileno()).st_size
-                total_size = archive_size + os.path.getsize(absname)
-
-                # If the file size is greater than the volume size,
-                # this volume will contains a single file.
-                # If the current size + next file size is greater than the volume size,
-                # we generate a new volume.
-                if archive_size != 0 and total_size > volume_size:
-                    tar.close(), archive.close()
-                    tar, archive = volume_generator.next()
-                    self.volumes.append(archive.name)
+                total_size = self._archive_size() + os.path.getsize(absname)
+                # Check the volume size, and create a new module if needed
+                self._check_size(total_size)
 
                 # Add the file in the archive
-                tar.add(absname, arcname=arcname)
+                self._tar.add(absname, arcname=arcname)
+                # Add the file to the volume index
+                self.volume_index[arcname].add(os.path.basename(self._archive.name))
 
-        tar.close(), archive.close()
-
-        # Clean up the volume index for a nicer outputs
-        self.volume_index = dict(self.volume_index)
-        for k, v in self.volume_index.iteritems():
-            self.volume_index[k] = list(v)
+        # Close the archive
+        self.close()
 
         return self.volumes, self.volume_index
 
@@ -442,3 +447,46 @@ def apply_diff(base_path, diff_index, diff_archive):
         assert dirtools.Dir(base_path).hash() == diff_index['hashdir']
     except AssertionError:
         log.error("Diff integrity check failed.")
+
+
+class DiffData(DiffBase):
+    """ Handle the archive creation for the DiffIndex.
+
+    Take the DiffIndex data, and put needed files in an archive.
+
+    :type diff_index: dict
+    :param diff_index: DiffIndex.compute() result
+
+    """
+    def __init__(self, diff_index):
+        self.diff_index = diff_index
+
+    def create_archive(self, archive_path):
+        """ Actually create a tgz archive, with two directories:
+
+        - created, where the new files are stored.
+        - updated, contains the pyrsync deltas.
+
+        Everything is stored at root, with the hash of the path as filename.
+
+        :type archive_path: str
+        :param archive_path: Path to the archive
+
+        """
+        tar = tarfile.open(archive_path, mode='w:gz')
+        # Store the created files in the archive, in the created/ directory
+        for created in self.diff_index['created']:
+            path = os.path.join(self.diff_index['dir_index']['directory'],
+                                created)
+            filename = get_hash(created)
+            tar.add(path, arcname=os.path.join('created/', filename))
+
+        # Store the delta in the archive, in the updated/ directory
+        for delta in self.diff_index['deltas']:
+            filename = get_hash(delta['path'])
+            arcname = os.path.join('updated/', filename)
+            # delta_path is the path to the tmpfile DiffIndex must have created
+            tar.add(delta['delta_path'], arcname=arcname)
+            os.remove(delta['delta_path'])
+
+        tar.close()
