@@ -7,6 +7,7 @@ import os
 import re
 import logging
 from datetime import datetime
+import collections
 
 import simplejson as json
 import dirtools
@@ -197,6 +198,131 @@ class DiffData(DiffBase):
             os.remove(delta['delta_path'])
 
         tar.close()
+
+
+class TarVolume(dirtools.Dir):
+    """ Implement multi volume tarfile archives.
+
+    :type path: str
+    :param path: Path where the volumes are stored.
+
+    :type archive_key: str
+    :param archive_key: Archive key
+
+    :type volume_index: dict
+    :param volume_index: Volume index (optional when full restore)
+
+    """
+    def __init__(self, path, archive_key=None, volume_index=None):
+        _return = super(TarVolume, self).__init__(path)
+        self.archive_key = archive_key
+        self.volumes = list(self.files('{0}.vol*.tgz'.format(archive_key)))
+        self.volume_index = volume_index
+        if volume_index is None:
+            self.volume_index = collections.defaultdict(set)
+        return _return
+
+    def _volume_generator(self):
+        archive_name = self.archive_key + '.vol{0}.tgz'
+        i = 0
+        while 1:
+            # TODO gerer le archive name
+            current_archive = archive_name.format(i)
+            archive = open(os.path.join(tempfile.gettempdir(), current_archive), 'wb')
+            yield tarfile.open(fileobj=archive, mode='w:gz'), archive
+            i += 1
+
+    def compress(self, volume_size=2 ** 20):
+        """ Compress the initialized directory to multi volume gzipped archive.
+
+        :type volume_size: int
+        :param volume_index: Byte size of a single volume
+
+        """
+        volume_generator = self._volume_generator()
+        tar, archive = volume_generator.next()
+        self.volumes.append(archive.name)
+        for root, dirs, files in self.walk():
+            cdir = os.path.relpath(root, self.path)
+            for f in files:
+                if cdir != '.' and not cdir in self.volume_index:
+                    tar.add(root, arcname=cdir, recursive=False)
+                if cdir != '.':
+                    self.volume_index[cdir].add(archive.name)
+                absname = os.path.join(root, f)
+                arcname = os.path.relpath(absname, self.parent)
+                self.volume_index[arcname].add(archive.name)
+                archive_size = os.fstat(archive.fileno()).st_size
+                total_size = archive_size + os.path.getsize(absname)
+                if archive_size != 0 and total_size > volume_size:
+                    tar.close(), archive.close()
+                    tar, archive = volume_generator.next()
+                    self.volumes.append(archive.name)
+                tar.add(absname, arcname=arcname)
+        tar.close(), archive.close()
+        self.volume_index = dict(self.volume_index)
+        for k, v in self.volume_index.iteritems():
+            self.volume_index[k] = list(v)
+        return self.volumes, self.volume_index
+
+    @classmethod
+    def from_volumes(cls, volumes, volume_index=None):
+        # Extraire juste un dossier ou juste fichier
+        _cls = cls('.')
+        _cls.volumes = volumes
+        if volume_index is None:
+            volume_index = collections.defaultdict(set)
+        _cls.volume_index = volume_index
+        return _cls
+
+    def extractall(self, path='.'):
+        """ Extract the archive to path or the current working directory.
+
+        :type path: str
+        :param path: Path for extraction, current working directory by default
+
+        """
+        for v in self.volumes:
+            tar = tarfile.open(v, 'r:gz')
+            tar.extractall(path)
+            tar.close()
+
+    def extract(self, member, path=''):
+        """ Extract a member to the current working directory or path.
+
+        :type member: str
+        :param member: Relative path to the file
+
+        :type path: str
+        :param path: Path for extraction, current working directory by default
+
+        """
+        if member in self.volume_index:
+            # gerer le cas 2 volumes
+            volume = list(self.volume_index[member])[0]
+            tar = tarfile.open(volume, 'r:gz')
+            tar_member = tar.getmember(member)
+            tar.extract(tar_member, path)
+            tar.close()
+        else:
+            raise IOError('Member not found in the volume.')
+
+    def extractfile(self, member):
+        """ Extract a single fileobject from the multi volume archive.
+
+        :type member: str
+        :param member: Relative path to the file
+
+        """
+        if member in self.volume_index:
+            volume = list(self.volume_index[member])[0]
+            tar = tarfile.open(volume, 'r:gz')
+            tar_member = tar.getmember(member)
+            _return = tar.extractfile(tar_member)
+            tar.close()
+            return _return
+        else:
+            raise IOError('Member not found in the volume.')
 
 
 def apply_diff(base_path, diff_index, diff_archive):
