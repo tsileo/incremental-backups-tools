@@ -14,6 +14,8 @@ from pyrsync import pyrsync
 
 log = logging.getLogger('incremental_backups_tools')
 
+FILENAME_DATE_FMT = '%Y-%m-%dT%H:%M:%S'
+
 
 def get_hash(val):
     """ Helper for generating path hash. """
@@ -27,16 +29,16 @@ def generate_filename(filename, with_date=True, ext="json"):
     mydir_index.2013-07-03-22-20-58.json
 
     """
-    ts = datetime.utcnow().strftime('%Y-%m-%d-%H-%M-%S')
+    ts = datetime.utcnow().strftime(FILENAME_DATE_FMT)
     if with_date:
         return '{0}.{1}.{2}'.format(filename, ts, ext)
     return '{0}.{1}'.format(filename, ext)
 
 
 def sort_filename(filename):
-    date_str = re.search(r"\d+-\d+-\d+-\d+-\d+-\d+", filename)
+    date_str = re.search(r"\d+-\d+-\d+T\d+:\d+:\d+", filename)
     if date_str:
-        dt = datetime.strptime(date_str.group(), '%Y-%m-%d-%H-%M-%S')
+        dt = datetime.strptime(date_str.group(), FILENAME_DATE_FMT)
         return int(dt.strftime('%s'))
     return 0
 
