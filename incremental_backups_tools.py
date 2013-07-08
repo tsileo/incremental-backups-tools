@@ -4,6 +4,7 @@ import hashlib
 import shutil
 import tempfile
 import os
+import re
 import logging
 from datetime import datetime
 
@@ -30,6 +31,14 @@ def generate_filename(filename, with_date=True, ext="json"):
     if with_date:
         return '{0}.{1}.{2}'.format(filename, ts, ext)
     return '{0}.{1}'.format(filename, ext)
+
+
+def sort_filename(filename):
+    date_str = re.search(r"\d+-\d+-\d+-\d+-\d+-\d+", filename)
+    if date_str:
+        dt = datetime.strptime(date_str.group(), '%Y-%m-%d-%H-%M-%S')
+        return int(dt.strftime('%s'))
+    return 0
 
 
 class DiffBase(object):
@@ -86,7 +95,7 @@ class DirIndex(DiffBase):
     def data(self):
         """ Generate the index. """
         data = {}
-        data['directory'] = self._dir.directory
+        data['directory'] = self._dir.path
         data['files'] = list(self._dir.files())
         data['subdirs'] = list(self._dir.subdirs())
         data['index'] = self.index()
