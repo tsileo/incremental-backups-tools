@@ -95,13 +95,11 @@ Usage
 TarVolume usage
 ---------------
 
-You must add files inside the directory you initialized ``TarVolume``.
-
-``TarVolume`` try to mimic ``tarfile`` API, check the source for more informations.
+``TarVolume`` try to mimic some parts of the ``tarfile`` API, but it's not a drop-in replacement, check the source for more informations.
 
 .. code-block:: python
 
-    from incremental_backups_tools import DirIndex, DiffIndex, DiffData, apply_diff, TarVolume
+    from incremental_backups_tools import TarVolume
     from dirtools import Dir
 
     mydir_dir = Dir('/home/thomas/mydir')
@@ -123,8 +121,7 @@ And to restore:
 
 .. code-block:: python
 
-    from incremental_backups_tools import DirIndex, DiffIndex, DiffData, apply_diff, TarVolume
-    from dirtools import Dir
+    from incremental_backups_tools import TarVolume
 
     # Will try to load all the volume present in /tmp for mydir
     tar_volume = TarVolume.open('/tmp', 'mydir', mode='r', volume_index=volume_index)
