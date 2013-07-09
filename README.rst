@@ -107,7 +107,7 @@ You must add files inside the directory you initialized ``TarVolume``.
     tar_volume = TarVolume('/home/thomas/mydir')
 
     # Either compress the full directory
-    archives, volume_indes = tar_volume.compress()
+    archives, volume_index = tar_volume.compress()
     
     # Or add some file one by one
     tar_volume.add('file1')

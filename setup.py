@@ -14,7 +14,6 @@ setup(
     license="MIT",
     keywords="incremental backups diff patch rsync",
     url="https://github.com/tsileo/incremental-backups-tools",
-    bugtrack_url="https://github.com/tsileo/incremental-backups-tools/issues",
     py_modules=["incremental_backups_tools"],
     long_description=read("README.rst"),
     install_requires=["dirtools", "pyrsync"],

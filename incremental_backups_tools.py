@@ -16,6 +16,7 @@ from pyrsync import pyrsync
 log = logging.getLogger('incremental_backups_tools')
 
 FILENAME_DATE_FMT = '%Y-%m-%dT%H:%M:%S'
+DEFAULT_VOLUME_SIZE = 20 * 2 ** 20
 
 
 def get_hash(val):
@@ -157,34 +158,109 @@ class DiffIndex(DiffBase):
         return self.compute()
 
 
+class TarVolumeReader(object):
+    """ Multi-volume archive Writer.
 
+    Allows to extract the full archive (volume by volume) transparently,
+    or with the help of a volume_index, extract just some files or a directory.
 
-class TarVolume(dirtools.Dir):
-    """ Implement multi volume tarfile archives.
-
-    :type path: str
-    :param path: Path where the volumes are stored.
-
-    :type archive_key: str
-    :param archive_key: Archive key
-
-    :type volume_index: dict
-    :param volume_index: Volume index (optional when full restore)
+    Two ways to open a multi-volume archive, either providing the path and the archive key,
+    either with a list containing the full path of each volume.
 
     """
-    def __init__(self, path, archive_key=None, volume_index=None, volume_size=2 ** 20):
-        _return = super(TarVolume, self).__init__(path)
-        self.init = False
+    def __init__(self, path=None, archive_key=None, volumes=[], volume_index=None):
         self.archive_key = archive_key
-        if self.archive_key is None:
-            self.archive_key = self.directory
-        self.volumes = list(self.files('{0}.vol*.tgz'.format(archive_key)))
-        self.volume_index = volume_index
-        if volume_index is None:
+        self.path = path
+        self.dir_path = None
+        if path:
+            self.dir_path = dirtools.Dir(path)
+
+        # If no volumes are provided, we gather if from the path/archive_key
+        if not volumes:
+            self.volumes = list(self.dir_path.files('{0}.vol*.tgz'.format(archive_key)))
+        else:
+            self.volumes = volumes
+
+        if volume_index:
+            self.volume_index = volume_index
+        else:
             self.volume_index = collections.defaultdict(set)
+
+    def extractall(self, path='.'):
+        """ Extract the archive to path or the current working directory.
+
+        :type path: str
+        :param path: Path for extraction, current working directory by default
+
+        """
+        for v in self.volumes:
+            if not os.path.isabs(v) and self.dir_path:
+                v = os.path.join(self.dir_path.path, v)
+            tar = tarfile.open(v, 'r:gz')
+            tar.extractall(path)
+            tar.close()
+
+    def extract(self, member, path=''):
+        """ Extract a member to the current working directory or path.
+
+        :type member: str
+        :param member: Relative path to the file
+
+        :type path: str
+        :param path: Path for extraction, current working directory by default
+
+        """
+        if member in self.volume_index:
+            # gerer le cas 2 volumes
+            for volume in self.volume_index[member]:
+                tar = tarfile.open(volume, 'r:gz')
+                tar_member = tar.getmember(member)
+                tar.extract(tar_member, path)
+                tar.close()
+        else:
+            raise IOError('Member not found in the volume.')
+
+    def extractfile(self, member):
+        """ Extract a single fileobject from the multi volume archive.
+
+        :type member: str
+        :param member: Relative path to the file
+
+        """
+        if member in self.volume_index:
+            volume = list(self.volume_index[member])[0]
+            if not os.path.isabs(volume) and self.dir_path:
+                volume = os.path.join(self.dir_path.path, volume)
+            tar = tarfile.open(volume, 'r:gz')
+            tar_member = tar.getmember(member)
+            return tar.extractfile(tar_member)
+        else:
+            raise IOError('Member not found in the volume.')
+
+
+class TarVolumeWriter(object):
+    """ Multi-volume Tar archive Writer.
+
+    :type archive_dir: str
+    :param archive_dir: Directory where the volumes will be created.
+
+    :type archive_key: str
+    :param archive_key: Archive key for filename creation,
+        the archive will be stored in the following format:
+        {archive_key}.vol{i}.tgz
+
+    """
+    def __init__(self, archive_dir, archive_key, volume_size=DEFAULT_VOLUME_SIZE):
+        self.init = False
+        self.archive_dir = archive_dir
+        self.archive_key = archive_key  # will append .vol{i}.tgz
+        # list containing the volumes path
+        self.volumes = []
+        # Initializing an empty volume index
+        self.volume_index = collections.defaultdict(set)
         self.volume_generator = self._volume_generator()
         self.volume_size = volume_size
-        return _return
+        self.volume_dir = tempfile.gettempdir()
 
     def _volume_generator(self):
         archive_name = self.archive_key + '.vol{0}.tgz'
@@ -192,7 +268,7 @@ class TarVolume(dirtools.Dir):
         while 1:
             # TODO gerer le archive name
             current_archive = archive_name.format(i)
-            archive = open(os.path.join(tempfile.gettempdir(), current_archive), 'wb')
+            archive = open(os.path.join(self.volume_dir, current_archive), 'wb')
             yield tarfile.open(fileobj=archive, mode='w:gz'), archive
             i += 1
 
@@ -236,16 +312,14 @@ class TarVolume(dirtools.Dir):
     def add(self, name, arcname=None, recursive=True):
         """ Add the file the multi-volume archive, handle volumes transparently.
 
-        Works like tarfile.add
+        Works like tarfile.add, be careful if you don't specify arcname.
 
         Don't forget to call close after all add calls.
 
         """
         self._init_archive()
-        if not os.path.isabs(name):
-            name = os.path.join(self.path, name)
-        if arcname is None:
-            arcname = os.path.relpath(name, self.path)
+        if not os.path.isabs(name) and arcname is None:
+            arcname = name
 
         total_size = self._archive_size() + os.path.getsize(name)
         # Check the volume size, and create a new module if needed
@@ -256,8 +330,8 @@ class TarVolume(dirtools.Dir):
         # Add the file to the volume index
         self.volume_index[arcname].add(os.path.basename(self._archive.name))
 
-    def compress(self):
-        """ Compress the initialized directory to multi volume gzipped archive.
+    def addDir(self, dir_instance):
+        """ Add the dirtools.Dir instance directory to the archive.
 
         Return the list of volumes, and a volume index.
 
@@ -265,8 +339,9 @@ class TarVolume(dirtools.Dir):
 
         """
         self._init_archive()
-        for root, dirs, files in self.walk():
-            cdir = os.path.relpath(root, self.path)
+
+        for root, dirs, files in dir_instance.walk():
+            cdir = os.path.relpath(root, dir_instance.path)
 
             for f in files:
                 # We add the root if the directory is empty, it won't be created
@@ -278,7 +353,7 @@ class TarVolume(dirtools.Dir):
                     self.volume_index[cdir].add(os.path.basename(self._archive.name))
 
                 absname = os.path.join(root, f)
-                arcname = os.path.relpath(absname, self.parent)
+                arcname = os.path.relpath(absname, dir_instance.parent)
 
                 total_size = self._archive_size() + os.path.getsize(absname)
                 # Check the volume size, and create a new module if needed
@@ -294,68 +369,17 @@ class TarVolume(dirtools.Dir):
 
         return self.volumes, self.volume_index
 
+
+class TarVolume(object):
     @classmethod
-    def from_volumes(cls, volumes, volume_index=None):
-        """ Initialize a TarVolume directory with a custom
-            volumes list (and optionally a custom volume_index). """
-        # Extraire juste un dossier ou juste fichier
-        _cls = cls('.')
-        _cls.volumes = volumes
-        if volume_index is None:
-            volume_index = collections.defaultdict(set)
-        _cls.volume_index = volume_index
-        return _cls
-
-    def extractall(self, path='.'):
-        """ Extract the archive to path or the current working directory.
-
-        :type path: str
-        :param path: Path for extraction, current working directory by default
-
-        """
-        for v in self.volumes:
-            if not os.path.isabs(v):
-                v = os.path.join(self.path, v)
-            tar = tarfile.open(v, 'r:gz')
-            tar.extractall(path)
-            tar.close()
-
-    def extract(self, member, path=''):
-        """ Extract a member to the current working directory or path.
-
-        :type member: str
-        :param member: Relative path to the file
-
-        :type path: str
-        :param path: Path for extraction, current working directory by default
-
-        """
-        if member in self.volume_index:
-            # gerer le cas 2 volumes
-            for volume in self.volume_index[member]:
-                tar = tarfile.open(volume, 'r:gz')
-                tar_member = tar.getmember(member)
-                tar.extract(tar_member, path)
-                tar.close()
+    def open(cls, archive_dir=None, archive_key=None, mode='r', volume_size=DEFAULT_VOLUME_SIZE,
+             volumes=None, volume_index=None):
+        if len(mode) > 1 or mode not in 'rw':
+            raise ValueError("mode must be 'r' or 'w'")
+        if mode == 'r':
+            return TarVolumeReader(archive_dir, archive_key, volumes, volume_index)
         else:
-            raise IOError('Member not found in the volume.')
-
-    def extractfile(self, member):
-        """ Extract a single fileobject from the multi volume archive.
-
-        :type member: str
-        :param member: Relative path to the file
-
-        """
-        if member in self.volume_index:
-            volume = list(self.volume_index[member])[0]
-            tar = tarfile.open(volume, 'r:gz')
-            tar_member = tar.getmember(member)
-            _return = tar.extractfile(tar_member)
-            tar.close()
-            return _return
-        else:
-            raise IOError('Member not found in the volume.')
+            return TarVolumeWriter(archive_dir, archive_key, volume_size)
 
 
 def apply_diff(base_path, diff_index, diff_archive):
@@ -369,14 +393,13 @@ def apply_diff(base_path, diff_index, diff_archive):
 
     """
     tar = tarfile.open(diff_archive, mode='r:gz')
-
     # First step, we iterate over the updated files
     for updtd in diff_index['updated']:
         try:
             print(updtd)
             abspath = os.path.join(base_path, updtd)
 
-            member = tar.getmember(os.path.join('updated', get_hash(updtd)))
+            member = os.path.join('updated', get_hash(updtd))  # tar.getmember()
 
             # Load the pyrsync delta stored in JSON
             delta_file = tar.extractfile(member)
@@ -408,7 +431,7 @@ def apply_diff(base_path, diff_index, diff_archive):
     # Next, we iterate the created files
     for crtd in diff_index['created']:
         try:
-            member = tar.getmember(os.path.join('created', get_hash(crtd)))
+            member = os.path.join('created', get_hash(crtd))  # tar.getmember()
             src_file = tar.extractfile(member)
 
             abspath = os.path.join(base_path, crtd)
@@ -442,6 +465,96 @@ def apply_diff(base_path, diff_index, diff_archive):
             os.rmdir(abspath)
 
     tar.close()
+
+    try:
+        assert dirtools.Dir(base_path).hash() == diff_index['hashdir']
+    except AssertionError:
+        log.error("Diff integrity check failed.")
+
+
+def apply_diff2(base_path, diff_index, diff_archive_dir, diff_archive_key, volume_index):
+    """ Patch the directory base_path with diff_index/diff_archive.
+
+    :param diff_index: The DiffIndex data.
+    :param diff_archive: The DiffData archive corresponding to the DiffIndex.
+
+    Open the tarfile, and apply the updated, created, deleted,
+    deleted_dirs on base_path.
+
+    """
+    tar = TarVolume.open(diff_archive_dir, diff_archive_key, mode='r', volume_index=volume_index)
+    # First step, we iterate over the updated files
+    for updtd in diff_index['updated']:
+        try:
+            print(updtd)
+            abspath = os.path.join(base_path, updtd)
+
+            member = os.path.join('updated', get_hash(updtd))  # tar.getmember()
+
+            # Load the pyrsync delta stored in JSON
+            delta_file = tar.extractfile(member)
+            delta = json.loads(delta_file.read())
+            delta_file.close()
+
+            # A tempfile file to store the patched file/result
+            # before replacing the original
+            patched = tempfile.NamedTemporaryFile()
+
+            # Patch the current version of the file with the delta
+            # and store the result in the previously created tempfile
+            with open(abspath, 'rb') as f:
+                pyrsync.patchstream(f, patched, delta)
+
+            patched.seek(0)
+
+            # Now we replace the orignal file with the patched version
+            with open(abspath, 'wb') as f:
+                shutil.copyfileobj(patched, f)
+
+            patched.close()
+
+        except KeyError as exc:
+            # It means that a file is missing in the archive.
+            log.exception(exc)
+            raise Exception("DIFF CORRUPTED")
+
+    # Next, we iterate the created files
+    for crtd in diff_index['created']:
+        try:
+            member = os.path.join('created', get_hash(crtd))  # tar.getmember()
+            src_file = tar.extractfile(member)
+
+            abspath = os.path.join(base_path, crtd)
+            dirname = os.path.dirname(abspath)
+
+            # Create directories if they doesn't exist yet
+            if not os.path.exists(dirname):
+                    os.makedirs(dirname)
+
+            # We copy the file from the archive directly to its destination
+            with open(abspath, 'wb') as f:
+                shutil.copyfileobj(src_file, f)
+
+        except KeyError as exc:
+            # It means that a file is missing in the archive.
+            log.exception(exc)
+            raise Exception("DIFF CORRUPTED")
+
+    # Then, we iterate the deleted files
+    for dltd in diff_index['deleted']:
+        print(dltd)
+        abspath = os.path.join(base_path, dltd)
+        if os.path.isfile(abspath):
+            os.remove(abspath)
+
+    # Finally, we iterate the deleted directories
+    for dltd_drs in diff_index['deleted_dirs']:
+        print(dltd_drs)
+        abspath = os.path.join(base_path, dltd_drs)
+        if os.path.isdir(abspath):
+            os.rmdir(abspath)
+
+    #tar.close()
 
     try:
         assert dirtools.Dir(base_path).hash() == diff_index['hashdir']
@@ -490,3 +603,39 @@ class DiffData(DiffBase):
             os.remove(delta['delta_path'])
 
         tar.close()
+
+    def create_archive2(self, archive_key):
+        # TODO utiliser TarVolume, et laisser la fonction sans
+        # TODO documenter et revoir le volume zie
+        # TODO faire une class full backuip
+        """ Actually create a tgz archive, with two directories:
+
+        - created, where the new files are stored.
+        - updated, contains the pyrsync deltas.
+
+        Everything is stored at root, with the hash of the path as filename.
+
+        :type archive_path: str
+        :param archive_path: Path to the archive
+
+        """
+        tar_volume = TarVolume.open('/tmp', archive_key=archive_key, mode='w')
+        #tar = tarfile.open(archive_path, mode='w:gz')
+        # Store the created files in the archive, in the created/ directory
+        for created in self.diff_index['created']:
+            path = os.path.join(self.diff_index['dir_index']['directory'],
+                                created)
+            filename = get_hash(created)
+            tar_volume.add(path, arcname=os.path.join('created/', filename))
+
+        # Store the delta in the archive, in the updated/ directory
+        for delta in self.diff_index['deltas']:
+            filename = get_hash(delta['path'])
+            arcname = os.path.join('updated/', filename)
+            # delta_path is the path to the tmpfile DiffIndex must have created
+            tar_volume.add(delta['delta_path'], arcname=arcname)
+            os.remove(delta['delta_path'])
+
+        tar_volume.close()
+
+        return tar_volume.volumes, tar_volume.volume_index

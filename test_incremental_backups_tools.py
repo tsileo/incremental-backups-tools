@@ -165,11 +165,13 @@ class TestIncrementalBackupstools(unittest.TestCase):
         index2 = di2.data()
 
         diff_index = incremental_backups_tools.DiffIndex(index2, index1).compute()
-        diff_archive = '/tmp/testpatchdiff.tgz'
-        incremental_backups_tools.DiffData(diff_index).create_archive(diff_archive)
-        incremental_backups_tools.apply_diff('/tmp/test_incremental_backups_tools', diff_index, diff_archive)
-        os.remove(diff_archive)
-
+        #diff_archive = '/tmp/testpatchdiff.tgz'
+        archives, volume_index = incremental_backups_tools.DiffData(diff_index).create_archive2(self.dir.directory)
+        # TODO merger volume_index and diff_index dans apply_diff2, create_archive2
+        incremental_backups_tools.apply_diff2('/tmp/test_incremental_backups_tools', diff_index, '/tmp', self.dir.directory, volume_index)
+        #os.remove(diff_archive)
+        for a in archives:
+            os.remove(a)
         self.assertEqual(self.dir2.hash(), self.dir.hash())
 
     def testTarVolume(self):
@@ -181,8 +183,8 @@ class TestIncrementalBackupstools(unittest.TestCase):
                 expected_hashs[fhh] = dirtools.filehash(fhh)
 
         expected_hash = self.dir4.hash()
-        tar_volume = incremental_backups_tools.TarVolume(self.dir4.path, volume_size=2 ** 20)
-        archives, volume_index = tar_volume.compress()
+        tar_volume = incremental_backups_tools.TarVolume.open('/tmp', self.dir4.directory, mode='w', volume_size=2 ** 20)
+        archives, volume_index = tar_volume.addDir(self.dir4)
 
         self.assertEqual(len(archives), 5)
         #self.assertEqual(sorted(volume_index.keys()), sorted(['test_incremental_backups_tools4/big_file2', 'test_incremental_backups_tools4/big_file3', 'test_incremental_backups_tools4/big_file0', 'test_incremental_backups_tools4/big_file1', 'test_incremental_backups_tools4/file3.py', 'test_incremental_backups_tools4/big_file4', 'test_incremental_backups_tools4/dir1/subdir1/.project', 'test_incremental_backups_tools4/dir2/file_dir2', 'test_incremental_backups_tools4/dir2', 'test_incremental_backups_tools4/dir1/subdir1', 'test_incremental_backups_tools4/.exclude', 'test_incremental_backups_tools4', 'test_incremental_backups_tools4/dir1/subdir1/file_subdir1', 'test_incremental_backups_tools4/file1', 'test_incremental_backups_tools4/file2']))
@@ -191,7 +193,7 @@ class TestIncrementalBackupstools(unittest.TestCase):
         #incremental_backups_tools.TarVolume.from_volumes('/tmp/tibt5/', archives)
         #tar_volume.extractall('/tmp/tibt5')
 
-        tv = tar_volume.from_volumes(archives, volume_index)
+        tv = incremental_backups_tools.TarVolume.open('/tmp', self.dir4.directory, mode='r', volume_index=volume_index)  # from_volumes(archives, volume_index)
         tv.extractall('/tmp/tibt5')
 
         #tv.extract('test_incremental_backups_tools4/big_file2', '/tmp')
@@ -211,6 +213,8 @@ class TestIncrementalBackupstools(unittest.TestCase):
         #test_incremental_backups_tools4/big_file2
 
         shutil.rmtree('/tmp/tibt5')
+        for a in archives:
+            os.remove(a)
 
     def testTarVolume2(self):
         expected_hashs = {}
@@ -221,11 +225,11 @@ class TestIncrementalBackupstools(unittest.TestCase):
                 expected_hashs[fhh] = dirtools.filehash(fhh)
 
         expected_hash = self.dir4.hash()
-        tar_volume = incremental_backups_tools.TarVolume(self.dir4.path, volume_size=2 ** 20)
+        tar_volume = incremental_backups_tools.TarVolume.open('/tmp', self.dir4.directory, mode='w', volume_size=2 ** 20)
         #archives, volume_index = tar_volume.compress()
 
         for f in self.dir4.files():
-            tar_volume.add(f)
+            tar_volume.add(os.path.join(self.dir4.path, f), arcname=f)
         tar_volume.close()
 
         archives = tar_volume.volumes
@@ -237,7 +241,7 @@ class TestIncrementalBackupstools(unittest.TestCase):
         #incremental_backups_tools.TarVolume.from_volumes('/tmp/tibt5/', archives)
         #tar_volume.extractall('/tmp/tibt5')
 
-        tv = tar_volume.from_volumes(archives, volume_index)
+        tv = incremental_backups_tools.TarVolume.open('/tmp', self.dir4.directory, mode='r', volume_index=volume_index)
         tv.extractall('/tmp/tibt5')
 
         #tv.extract('test_incremental_backups_tools4/big_file2', '/tmp')
@@ -255,8 +259,8 @@ class TestIncrementalBackupstools(unittest.TestCase):
 
         #print os.path.join(self.base_path + '4', 'big_file2')
         #test_incremental_backups_tools4/big_file2
-
-        shutil.rmtree('/tmp/tibt5')
+        if os.path.isdir('/tmp/tibt5'):
+            shutil.rmtree('/tmp/tibt5')
 
 if __name__ == '__main__':
     unittest.main()
