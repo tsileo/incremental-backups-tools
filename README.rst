@@ -104,15 +104,17 @@ You must add files inside the directory you initialized ``TarVolume``.
     from incremental_backups_tools import DirIndex, DiffIndex, DiffData, apply_diff, TarVolume
     from dirtools import Dir
 
-    tar_volume = TarVolume('/home/thomas/mydir')
+    mydir_dir = Dir('/home/thomas/mydir')
 
-    # Either compress the full directory
-    archives, volume_index = tar_volume.compress()
+    tar_volume = TarVolume.open('/tmp', mydir_dir.directory, mode='w')
+
+    # Either pass a Dir instance
+    archives, volume_index = tar_volume.addDir(mydir_dir)
     
-    # Or add some file one by one
+    # Or add some file/directory one by one
     tar_volume.add('file1')
     # or
-    tar_volume.add('/home/thomas/mydir/file1')
+    tar_volume.add('/home/thomas/mydir')
 
     # And if you used tar_volume.add, you need to close it
     tar_volume.close()
@@ -125,7 +127,7 @@ And to restore:
     from dirtools import Dir
 
     # Will try to load all the volume present in /tmp for mydir
-    tar_volume = TarVolume('/tmp', 'mydir')
+    tar_volume = TarVolume.open('/tmp', 'mydir', mode='r', volume_index=volume_index)
     tar_volume.extractall('/tmp')
 
     # and you extract single file
