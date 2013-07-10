@@ -14,7 +14,7 @@ setup(
     license="MIT",
     keywords="incremental backups diff patch rsync",
     url="https://github.com/tsileo/incremental-backups-tools",
-    py_modules=["incremental_backups_tools"],
+    packages=['incremental_backups_tools'],
     long_description=read("README.rst"),
     install_requires=["dirtools", "pyrsync"],
     tests_require=[],
@@ -25,5 +25,4 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python",
     ],
-    scripts=["incremental_backups_tools.py"],
 )
