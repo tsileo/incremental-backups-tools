@@ -11,12 +11,11 @@ from datetime import datetime
 import simplejson as json
 import dirtools
 from pyrsync import pyrsync
-from incremental_backups_tools.tarvolume import TarVolume
+from incremental_backups_tools import tarvolume
 
-log = logging.getLogger('incremental_backups_tools')
+log = logging.getLogger('incremental_backups_tools.diff')
 
 FILENAME_DATE_FMT = '%Y-%m-%dT%H:%M:%S'
-DEFAULT_VOLUME_SIZE = 20 * 2 ** 20
 
 
 def get_hash(val):
@@ -141,15 +140,19 @@ class DiffIndex(DiffBase):
 
         for f in set(self.cmp_index['files']).intersection(set(self.dir_index['files'])):
             # We cast the block checksums to list as pyrsync return tuple, and json list
-            if list(self.cmp_index['index'][f]) != list(self.dir_index['index'][f]):
+            if list(self.cmp_index['index'][f]) \
+                    != list(self.dir_index['index'][f]):
                 # We load the file to generate the delta against the old index
                 f_abs = open(dirtools.os.path.join(self.dir_index['directory'],
                              f), 'rb')
 
-                # We store the delta in a temporary file, the file will be deleted when stored in the archives.
+                # We store the delta in a temporary file,
+                # the file will be deleted when stored in the archives.
                 delta_tmp = tempfile.NamedTemporaryFile(delete=False)
-                delta_tmp.write(json.dumps(pyrsync.rsyncdelta(f_abs, self.cmp_index['index'][f])))
-                data['deltas'].append({'path': f, 'delta_path': delta_tmp.name})
+                delta_tmp.write(json.dumps(pyrsync.rsyncdelta(f_abs,
+                                                              self.cmp_index['index'][f])))
+                data['deltas'].append({'path': f,
+                                       'delta_path': delta_tmp.name})
                 data['updated'].append(f)
                 delta_tmp.close()
 
@@ -171,7 +174,7 @@ def apply_diff(base_path, diff_index, diff_archive_dir,
     deleted_dirs on base_path.
 
     """
-    tar = TarVolume.open(diff_archive_dir, diff_archive_key,
+    tar = tarvolume.open(diff_archive_dir, diff_archive_key,
                          mode='r', volume_index=volume_index)
     # First step, we iterate over the updated files
     for updtd in diff_index['updated']:
@@ -309,7 +312,7 @@ class DiffData(DiffBase):
         :param archive_path: Path to the archive
 
         """
-        tar_volume = TarVolume.open('/tmp', archive_key=archive_key, mode='w')
+        tar_volume = tarvolume.open('/tmp', archive_key=archive_key, mode='w')
         #tar = tarfile.open(archive_path, mode='w:gz')
         # Store the created files in the archive, in the created/ directory
         for created in self.diff_index['created']:

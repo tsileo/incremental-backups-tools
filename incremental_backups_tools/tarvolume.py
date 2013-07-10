@@ -9,7 +9,6 @@ import dirtools
 
 log = logging.getLogger('incremental_backups_tools.tarvolume')
 
-FILENAME_DATE_FMT = '%Y-%m-%dT%H:%M:%S'
 DEFAULT_VOLUME_SIZE = 20 * 2 ** 20
 
 
@@ -129,7 +128,7 @@ class TarVolumeWriter(object):
             # TODO gerer le archive name
             current_archive = archive_name.format(i)
             volume_path = os.path.join(self.volume_dir, current_archive)
-            archive = open(volume_path, 'wb')
+            archive = bltn_open(volume_path, 'wb')
             yield tarfile.open(fileobj=archive, mode='w:gz'), archive
             i += 1
 
@@ -249,3 +248,6 @@ class TarVolume(object):
                                    volumes, volume_index)
         else:
             return TarVolumeWriter(archive_dir, archive_key, volume_size)
+
+bltn_open = open
+open = TarVolume.open
