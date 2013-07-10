@@ -71,7 +71,7 @@ Usage
 
 .. code-block:: python
 
-    from incremental_backups_tools import DirIndex, DiffIndex, DiffData, apply_diff
+    from incremental_backups_tools.diff import DirIndex, DiffIndex, DiffData, apply_diff
     from dirtools import Dir
 
     d = Dir('/home/thomas/mydir')
@@ -99,12 +99,12 @@ TarVolume usage
 
 .. code-block:: python
 
-    from incremental_backups_tools import TarVolume
+    from incremental_backups_tools import tarvolume
     from dirtools import Dir
 
     mydir_dir = Dir('/home/thomas/mydir')
 
-    tar_volume = TarVolume.open('/tmp', mydir_dir.directory, mode='w')
+    tar_volume = tarvolume.open('/tmp', mydir_dir.directory, mode='w')
 
     # Either pass a Dir instance
     archives, volume_index = tar_volume.addDir(mydir_dir)
@@ -121,15 +121,15 @@ And to restore:
 
 .. code-block:: python
 
-    from incremental_backups_tools import TarVolume
+    from incremental_backups_tools import tarvolume
 
     # Will try to load all the volume present in /tmp for mydir
-    tar_volume = TarVolume.open('/tmp', 'mydir', mode='r', volume_index=volume_index)
+    tar_volume = tarvolume.open('/tmp', 'mydir', mode='r', volume_index=volume_index)
     tar_volume.extractall('/tmp')
 
     # and you extract single file
     tar_volume.extract('mydir/file1', '/tmp')
-    # or
+    # or to get a fileobj-like object
     file1 = tar_volume.extractfile('mydir/file1')
 
 
