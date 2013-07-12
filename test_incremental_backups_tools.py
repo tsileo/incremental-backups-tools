@@ -188,7 +188,7 @@ class TestIncrementalBackupstools(unittest.TestCase):
 
         diff_index = DiffIndex(index2, index1).compute()
         #diff_archive = '/tmp/testpatchdiff.tgz'
-        archives, volume_index = DiffData(diff_index).create_archive2(self.dir.directory)
+        archives, volume_index = DiffData(diff_index).create_archive(self.dir.directory)
         # TODO merger volume_index and diff_index dans apply_diff2, create_archive2
         apply_diff('/tmp/test_incremental_backups_tools', diff_index, '/tmp', self.dir.directory, volume_index)
         #os.remove(diff_archive)

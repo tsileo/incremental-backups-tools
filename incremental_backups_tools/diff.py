@@ -255,37 +255,7 @@ class DiffData(DiffBase):
     def __init__(self, diff_index):
         self.diff_index = diff_index
 
-    def create_archive(self, archive_path):
-        """ Actually create a tgz archive, with two directories:
-
-        - created, where the new files are stored.
-        - updated, contains the pyrsync deltas.
-
-        Everything is stored at root, with the hash of the path as filename.
-
-        :type archive_path: str
-        :param archive_path: Path to the archive
-
-        """
-        tar = tarfile.open(archive_path, mode='w:gz')
-        # Store the created files in the archive, in the created/ directory
-        for created in self.diff_index['created']:
-            path = os.path.join(self.diff_index['dir_index']['directory'],
-                                created)
-            filename = get_hash(created)
-            tar.add(path, arcname=os.path.join('created/', filename))
-
-        # Store the delta in the archive, in the updated/ directory
-        for delta in self.diff_index['deltas']:
-            filename = get_hash(delta['path'])
-            arcname = os.path.join('updated/', filename)
-            # delta_path is the path to the tmpfile DiffIndex must have created
-            tar.add(delta['delta_path'], arcname=arcname)
-            os.remove(delta['delta_path'])
-
-        tar.close()
-
-    def create_archive2(self, archive_key):
+    def create_archive(self, archive_key):
         # TODO utiliser TarVolume, et laisser la fonction sans
         # TODO documenter et revoir le volume zie
         # TODO faire une class full backuip
