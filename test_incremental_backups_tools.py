@@ -2,7 +2,6 @@
 import unittest
 import os
 import shutil
-import tarfile
 
 import dirtools
 from incremental_backups_tools import tarvolume
@@ -131,6 +130,7 @@ class TestIncrementalBackupstools(unittest.TestCase):
         self.assertEqual(diff_index['dir_index']['index'],
                          self.dir_index_expected)
 
+        self.assertEqual(diff_index['hashdir'], self.dir3.hash())
         self.assertEqual(diff_index['created'], [])
         self.assertEqual(diff_index['deleted'], [])
         self.assertEqual(diff_index['deleted_dirs'], [])
@@ -145,6 +145,7 @@ class TestIncrementalBackupstools(unittest.TestCase):
 
         diff_index = DiffIndex(index2, index1).compute()
 
+        self.assertEqual(diff_index['hashdir'], self.dir2.hash())
         self.assertEqual(diff_index['dir_index']['directory'],
                          '/tmp/test_incremental_backups_tools2')
         self.assertEqual(sorted(diff_index['dir_index']['files']),
@@ -174,6 +175,7 @@ class TestIncrementalBackupstools(unittest.TestCase):
         for a in archives:
             os.remove(a)
         self.assertEqual(self.dir2.hash(), self.dir.hash())
+        self.assertEqual(diff_index['hashdir'], self.dir.hash())
 
     def testTarVolume(self):
         expected_hashs = {}

@@ -5,15 +5,16 @@ import os
 import logging
 import collections
 
-import dirtools
+from dirtools import Dir
 
 log = logging.getLogger('incremental_backups_tools.tarvolume')
 
+# 20MB default volume size
 DEFAULT_VOLUME_SIZE = 20 * 2 ** 20
 
 
 class TarVolumeReader(object):
-    """ Multi-volume archive Writer.
+    """ Multi-volume archive Reader.
 
     Allows to extract the full archive (volume by volume) transparently,
     or with the help of a volume_index, extract just some files or a directory.
@@ -29,7 +30,7 @@ class TarVolumeReader(object):
         self.archive_dir = archive_dir
         self.dir_path = None
         if archive_dir:
-            self.dir_path = dirtools.Dir(archive_dir)
+            self.dir_path = Dir(archive_dir)
 
         # If no volumes are provided, we gather if from the path/archive_key
         if not volumes:
@@ -80,6 +81,9 @@ class TarVolumeReader(object):
     def extractfile(self, member):
         """ Extract a single fileobject from the multi volume archive.
 
+        Search (in the volume_index)
+        and open the volume where the file is stored.
+
         :type member: str
         :param member: Relative path to the file
 
@@ -97,6 +101,9 @@ class TarVolumeReader(object):
 
 class TarVolumeWriter(object):
     """ Multi-volume Tar archive Writer.
+
+    Keep tracks of the volume where each file/directory
+    is stored through the volume_index.
 
     :type archive_dir: str
     :param archive_dir: Directory where the volumes will be created.
