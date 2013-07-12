@@ -83,15 +83,12 @@ class DirIndex(DiffBase):
         data['index'] = self.index()
         return data
 
-    def empty_diff_index(self):
-        """ Generate en empty DiffIndex result, useful for full backup. """
-        return dict(dir_index=self.data(),
-                    hashdir=self._dir.hash(),
-                    created=[],
-                    deleted=[],
-                    deleted_dirs=[],
-                    updated=[],
-                    deltas=[])
+    def empty(self):
+        """ Generate en empty DirIndex result, useful for full backup. """
+        return dict(directory=self._dir.path,
+                    files=[],
+                    subdirs=[],
+                    index={})
 
 
 class DiffIndex(DiffBase):

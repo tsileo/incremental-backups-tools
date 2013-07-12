@@ -127,6 +127,8 @@ class TarVolumeWriter(object):
         self.volume_size = volume_size
         self.volume_dir = tempfile.gettempdir()
 
+        self._tar = None
+
     def _volume_generator(self):
         """ Volume generator, base on archive_dir and archive_key. """
         archive_name = self.archive_key + '.vol{0}.tgz'
@@ -170,7 +172,8 @@ class TarVolumeWriter(object):
     def close(self):
         """ Must be called once all files have been added.
         No need to call it with compress. """
-        self._tar.close(), self._archive.close()
+        if self._tar:
+            self._tar.close(), self._archive.close()
 
         # Clean up the volume index for a nicer outputs
         self.volume_index = dict(self.volume_index)
