@@ -15,33 +15,11 @@ from incremental_backups_tools import tarvolume
 
 log = logging.getLogger('incremental_backups_tools.diff')
 
-FILENAME_DATE_FMT = '%Y-%m-%dT%H:%M:%S'
 
 
 def get_hash(val):
     """ Helper for generating path hash. """
     return hashlib.sha256(val).hexdigest()
-
-
-def generate_filename(filename, with_date=True, ext="json"):
-    """ Helper for generating filename for dump,
-
-    >>> generate_filename('mydir_index')
-    mydir_index.2013-07-03-22-20-58.json
-
-    """
-    ts = datetime.utcnow().strftime(FILENAME_DATE_FMT)
-    if with_date:
-        return '{0}.{1}.{2}'.format(filename, ts, ext)
-    return '{0}.{1}'.format(filename, ext)
-
-
-def sort_filename(filename):
-    date_str = re.search(r"\d+-\d+-\d+T\d+:\d+:\d+", filename)
-    if date_str:
-        dt = datetime.strptime(date_str.group(), FILENAME_DATE_FMT)
-        return int(dt.strftime('%s'))
-    return 0
 
 
 class DiffBase(object):
@@ -104,6 +82,16 @@ class DirIndex(DiffBase):
         data['subdirs'] = list(self._dir.subdirs())
         data['index'] = self.index()
         return data
+
+    def empty_diff_index(self):
+        """ Generate en empty DiffIndex result, useful for full backup. """
+        return dict(dir_index=self.data(),
+                    hashdir=self._dir.hash(),
+                    created=[],
+                    deleted=[],
+                    deleted_dirs=[],
+                    updated=[],
+                    deltas=[])
 
 
 class DiffIndex(DiffBase):

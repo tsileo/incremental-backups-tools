@@ -137,6 +137,26 @@ class TestIncrementalBackupstools(unittest.TestCase):
         self.assertEqual(diff_index['updated'], [])
         self.assertEqual(diff_index['deltas'], [])
 
+    def testEmptyDiffIndex(self):
+        di1 = DirIndex(self.dir)
+        diff_index = di1.empty_diff_index()
+
+        self.assertEqual(diff_index['dir_index']['directory'],
+                         '/tmp/test_incremental_backups_tools')
+        self.assertEqual(sorted(diff_index['dir_index']['files']),
+                         sorted(self.dir_files_expected))
+        self.assertEqual(sorted(diff_index['dir_index']['subdirs']),
+                         sorted(self.dir_subdirs_expected))
+        self.assertEqual(diff_index['dir_index']['index'],
+                         self.dir_index_expected)
+
+        self.assertEqual(diff_index['hashdir'], self.dir.hash())
+        self.assertEqual(diff_index['created'], [])
+        self.assertEqual(diff_index['deleted'], [])
+        self.assertEqual(diff_index['deleted_dirs'], [])
+        self.assertEqual(diff_index['updated'], [])
+        self.assertEqual(diff_index['deltas'], [])
+
     def testDiffIndexWithChanges(self):
         di1 = DirIndex(self.dir)
         index1 = di1.data()
