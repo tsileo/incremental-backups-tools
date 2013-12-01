@@ -244,4 +244,4 @@ cache_path = '.'
 #print full_backup('/home/thomas/omgtxt2')
 #print incremental_backup('/home/thomas/omgtxt2')
 
-restore_backup('omgtxt2', dest, cache_path)
+#restore_backup('omgtxt2', dest, cache_path)
