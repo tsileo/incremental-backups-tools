@@ -16,7 +16,7 @@ setup(
     url="https://github.com/tsileo/incremental-backups-tools",
     packages=['incremental_backups_tools'],
     long_description=read("README.rst"),
-    install_requires=["dirtools", "pyrsync"],
+    install_requires=["dirtools", "python-librsync"],
     tests_require=[],
     test_suite="test_incremental_backups_tools",
     classifiers=[
