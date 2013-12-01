@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import tarfile
 import os
+from tempfile import NamedTemporaryFile
 
 import librsync
 
@@ -17,11 +18,15 @@ class SigVaultWriter(object):
         if path is not None:
             fileobj = bltn_open(os.path.join(self.base_path, path), 'rb')
         sig = librsync.signature(fileobj)
-        sig_size = os.fstat(sig.fileno()).st_size
+        # Copy the sig to a file in open mode
+        with NamedTemporaryFile() as f:
+            f.write(sig.read())
+            f.seek(0)
 
-        sig_info = tarfile.TarInfo(path)
-        sig_info.size = sig_size
-        self.tar.addfile(sig_info, sig)
+            sig_size = os.fstat(sig.fileno()).st_size
+            sig_info = tarfile.TarInfo(path)
+            sig_info.size = sig_size
+            self.tar.addfile(tarinfo=sig_info, fileobj=f)
 
     def close(self):
         self.tar.close()
@@ -58,4 +63,4 @@ class SigVault(object):
             return SigVaultWriter(path, base_path)
 
 bltn_open = open
-open = SigVault.open
+open_vault = SigVault.open

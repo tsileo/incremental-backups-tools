@@ -1,5 +1,5 @@
 import os
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 def read(fname):
@@ -14,7 +14,7 @@ setup(
     license="MIT",
     keywords="incremental backups diff patch rsync",
     url="https://github.com/tsileo/incremental-backups-tools",
-    packages=['incremental_backups_tools'],
+    packages=find_packages(),
     long_description=read("README.rst"),
     install_requires=["dirtools", "python-librsync"],
     tests_require=[],

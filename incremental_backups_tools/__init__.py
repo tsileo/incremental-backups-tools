@@ -20,33 +20,40 @@ log = logging
 CACHE_PATH = '/home/thomas/.cache/bakthat'
 
 
-def full_backup(path, cache_path='.'):
+def full_backup(path, cache_path=None):
+    if cache_path is None:
+        cache_path = tempfile.gettempdir()
+
     backup_date = datetime.utcnow()
     backup_dir = Dir(path)
 
     backup_dir_state = DirState(backup_dir)
     state_file = backup_dir_state.to_json(cache_path, dt=backup_date, fmt='{0}.state.{1}.json')
 
-    created_file = backup_dir.compress_to('{0}.full.{1}.tgz'.format(backup_dir.path.strip('/').split('/')[-1],
-                                                                    backup_date.isoformat()))
-
+    created_file = '{0}.full.{1}.tgz'.format(backup_dir.path.strip('/').split('/')[-1],
+                                             backup_date.isoformat())
     created_file = os.path.join(cache_path, created_file)
-
-    sigvault_file = '{0}.sigvault.{1}.tgz'.format(backup_dir.path.strip('/').split('/')[-1],
-                                                  backup_date.isoformat())
+    backup_dir.compress_to(created_file)
 
     # Create a new SigVault
-    sv = sigvault.open(os.path.join(CACHE_PATH, sigvault_file), 'w', base_path=backup_dir.path)
+    sigvault_file = '{0}.sigvault.{1}.tgz'.format(backup_dir.path.strip('/').split('/')[-1],
+                                                  backup_date.isoformat())
+    sigvault_file = os.path.join(CACHE_PATH, sigvault_file)
+
+    sv = sigvault.open_vault(sigvault_file, 'w', base_path=backup_dir.path)
 
     for f in backup_dir.iterfiles():
         sv.add(f)
 
     sv.close()
 
-    return backup_date.isoformat(), state_file, created_file, sigvault_file
+    return {'backup_date': backup_date, 'files': [state_file, created_file, sigvault_file]}
 
 
-def incremental_backup(path, cache_path='.'):
+def incremental_backup(path, cache_path=None):
+    if cache_path is None:
+        cache_path = tempfile.gettempdir()
+
     backup_date = datetime.utcnow()
     backup_dir = Dir(path)
     backup_key = backup_dir.path.strip('/').split('/')[-1]
@@ -82,7 +89,7 @@ def incremental_backup(path, cache_path='.'):
         sigvault_file = '{0}.sigvault.{1}.tgz'.format(backup_key,
                                                       backup_date.isoformat())
 
-        new_sv = sigvault.open(os.path.join(CACHE_PATH, sigvault_file), 'w', base_path=backup_dir.path)
+        new_sv = sigvault.open_vault(os.path.join(CACHE_PATH, sigvault_file), 'w', base_path=backup_dir.path)
         for f in itertools.chain(diff['created'], diff['updated']):
             new_sv.add(f)
         new_sv.close()
@@ -196,14 +203,17 @@ def patch_diff(base_path, diff, created_archive=None, updated_archive=None):
             os.rmdir(abspath)
 
 
-def get_full_and_incremental(key, cache_path='.'):
+def get_full_and_incremental(key, cache_path=None):
     """ From a directory as source, iterate over states files from a full backup,
     till the end/or another full backup. The first item is actually the full backup. """
+    if cache_path is None:
+        cache_path = tempfile.gettempdir()
+
     _dir = Dir(cache_path)
-    last_full = _dir.get('{0}.full.*'.format(key), sort_reverse=True)
+    last_full = _dir.get('{0}.full.*'.format(key), sort_reverse=True, abspath=True)
     last_full_date =  '.'.join(last_full.split('.')[-3:-1])
     last_full_dt = datetime.strptime(last_full_date, '%Y-%m-%dT%H:%M:%S.%f')
-    previous_state = _dir.get('{0}.state.{1}.json'.format(key, last_full_date), sort_reverse=True)
+    previous_state = _dir.get('{0}.state.{1}.json'.format(key, last_full_date), sort_reverse=True, abspath=True)
     yield last_full, None, last_full_dt
 
     for s_file in _dir.files('{0}.state.*'.format(key)):
@@ -214,9 +224,12 @@ def get_full_and_incremental(key, cache_path='.'):
             previous_state = s_file
 
 
-def restore_backup(key, dest, cache_path='.'):
+def restore_backup(key, dest, cache_path=None):
     """ Restore backups given the key to dest using cache_path as source
     for state and deltas. """
+    if cache_path is None:
+        cache_path = tempfile.gettempdir()
+
     for index, (state_file, previous_state_file, state_dt) in enumerate(get_full_and_incremental(key)):
         if index == 0:
             # At index == 0, state is the full archive
@@ -236,12 +249,7 @@ def restore_backup(key, dest, cache_path='.'):
 
 # TODO: full backup list
 # TODO: gerer DT str pour restorer
-# TODO: gerer cache path
 
-dest = '/home/thomas/omgaddest'
-cache_path = '.'
-
-#print full_backup('/home/thomas/omgtxt2')
+#print full_backup('/work/writing')
 #print incremental_backup('/home/thomas/omgtxt2')
-
-#restore_backup('omgtxt2', dest, cache_path)
+#print restore_backup('writing', '/tmp/writing_restored')
