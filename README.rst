@@ -42,7 +42,7 @@ Usage
 TODO
 ====
 
-[ ] Delete old ``SigVault`` when a new full backup is performed.
+* Delete old ``SigVault`` when a new full backup is performed.
 
 License (MIT)
 =============
