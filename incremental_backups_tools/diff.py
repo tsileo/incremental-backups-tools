@@ -1,289 +1,247 @@
 # -*- coding: utf-8 -*-
-import tarfile
-import hashlib
-import shutil
-import tempfile
 import os
-import re
+import tarfile
 import logging
+import tempfile
+import shutil
 from datetime import datetime
+import json
+import itertools
 
-import simplejson as json
-import dirtools
-from pyrsync import pyrsync
-from incremental_backups_tools import tarvolume
+import librsync
 
-log = logging.getLogger('incremental_backups_tools.diff')
+from dirtools import Dir, DirState, compute_diff, filehash
+import sigvault
 
+logging.basicConfig(level=logging.DEBUG)
 
+log = logging
 
-def get_hash(val):
-    """ Helper for generating path hash. """
-    return hashlib.sha256(val).hexdigest()
+CACHE_PATH = '/home/thomas/.cache/bakthat'
 
 
-class DiffBase(object):
-    """ Base class for diff tools.
+def full_backup(path, cache_path='.'):
+    backup_date = datetime.utcnow()
+    backup_dir = Dir(path)
 
-    With helpers to load/dump data from/to files.
+    backup_dir_state = DirState(backup_dir)
+    state_file = backup_dir_state.to_json(cache_path, dt=backup_date, fmt='{0}.state.{1}.json')
 
-    :type _dir: dirtools.Dir instance
-    :param _dir: Instance dirtools.Dir
+    created_file = backup_dir.compress_to('{0}.full.{1}.tgz'.format(backup_dir.path.strip('/').split('/')[-1],
+                                                                    backup_date.isoformat()))
 
+    created_file = os.path.join(cache_path, created_file)
+
+    sigvault_file = '{0}.sigvault.{1}.tgz'.format(backup_dir.path.strip('/').split('/')[-1],
+                                                  backup_date.isoformat())
+
+    # Create a new SigVault
+    sv = sigvault.open(os.path.join(CACHE_PATH, sigvault_file), 'w', base_path=backup_dir.path)
+
+    for f in backup_dir.iterfiles():
+        sv.add(f)
+
+    sv.close()
+
+    return backup_date.isoformat(), state_file, created_file, sigvault_file
+
+
+def incremental_backup(path, cache_path='.'):
+    backup_date = datetime.utcnow()
+    backup_dir = Dir(path)
+    backup_key = backup_dir.path.strip('/').split('/')[-1]
+
+    # TODO check if it's really the last state on the remote storage
+    last_state = Dir(cache_path).get('{0}.state.*'.format(backup_key), sort_reverse=True, abspath=True)
+
+    last_state = DirState.from_json(last_state)
+    current_state = DirState(backup_dir)
+
+    last_sv = sigvault.SigVaultReader(CACHE_PATH, backup_key)
+
+    diff = current_state - last_state
+
+    state_file = current_state.to_json(cache_path, dt=backup_date, fmt='{0}.state.{1}.json')
+
+    created_file = '{0}.created.{1}.tgz'.format(backup_key,
+                                                backup_date.isoformat())
+    created_file = os.path.join(cache_path, created_file)
+    created_file = process_created(created_file,
+                                   diff['created'],
+                                   backup_dir.path)
+
+    updated_file = '{0}.updated.{1}.tgz'.format(backup_key,
+                                                backup_date.isoformat())
+    updated_file = os.path.join(cache_path, updated_file)
+    updated_file = process_updated(updated_file,
+                                   diff['updated'],
+                                   backup_dir.path,
+                                   last_sv)
+
+    if diff['created'] or diff['updated']:
+        sigvault_file = '{0}.sigvault.{1}.tgz'.format(backup_key,
+                                                      backup_date.isoformat())
+
+        new_sv = sigvault.open(os.path.join(CACHE_PATH, sigvault_file), 'w', base_path=backup_dir.path)
+        for f in itertools.chain(diff['created'], diff['updated']):
+            new_sv.add(f)
+        new_sv.close()
+
+    return state_file, created_file, updated_file
+
+
+def process_created(path, created, base_path):
+    """ Put new file in a new archive. """
+    if created:
+        created_archive = tarfile.open(path, 'w:gz')
+        for f in created:
+            f_abs = os.path.join(base_path, f)
+            created_archive.add(f_abs, arcname=f)
+        created_archive.close()
+        return path
+
+
+def process_updated(path, updated, base_path, sigvault):
+    """ Process upated files, create a new SigVault if needed,
+    and create a new archives with delta (from the previous SigVault signatures).
     """
-    def __init__(self, _dir):
-        self._dir = _dir
+    if updated:
+        updated_archive = tarfile.open(path, 'w:gz')
+        for f in updated:
+            f_abs = os.path.join(base_path, f)
+            delta = librsync.delta(open(f_abs, 'rb'),
+                                   sigvault.extract(f))
 
-    def file_content(self):
-        """ Methods that should return the content for dumping to file. """
-        raise NotImplemented('Must define a content to dump/load.')
+            delta_size = os.fstat(delta.fileno()).st_size
 
-    @classmethod
-    def from_file(cls, filename):
-        """ Load the JSON file,
-        a stored result of previous main methods call. """
-        with open(filename) as f_h:
-            return json.loads(f_h.read())
-
-    def to_file(self, filename):
-        """ Dump the file in JSON. """
-        data = self.file_content()
-        with open(filename, "w") as f_h:
-            f_h.write(json.dumps(data))
+            delta_info = tarfile.TarInfo(f)
+            delta_info.size = delta_size
+            updated_archive.addfile(delta_info, delta)
+        updated_archive.close()
+        return path
 
 
-class DirIndex(DiffBase):
-    """ Generate a directory index,
-        for comparing older version without the full source.
+def patch_diff(base_path, diff, created_archive=None, updated_archive=None):
+    # First, we iterate the created files
+    if diff['created']:
+        for crtd in diff['created']:
+            created_tar = tarfile.open(created_archive, 'r:gz')
+            try:
+                src_file = created_tar.extractfile(crtd)
 
-    The index contains:
+                abspath = os.path.join(base_path, crtd)
+                dirname = os.path.dirname(abspath)
 
-    - the directory name
-    - list of relative files and subdirectories
-    - an index containing the pyrsync hash for each file
-
-    """
-    def file_content(self):
-        return self.data()
-
-    def index(self):
-        """ Compute the block checksums for each files (pyrsync algorithm). """
-        index = {}
-        for f in self._dir.files():
-            with open(os.path.join(self._dir.path, f), 'rb') as f_h:
-                index[f] = pyrsync.blockchecksums(f_h)
-        return index
-
-    def data(self):
-        """ Generate the index. """
-        data = {}
-        data['directory'] = self._dir.path
-        data['files'] = list(self._dir.files())
-        data['subdirs'] = list(self._dir.subdirs())
-        data['index'] = self.index()
-        return data
-
-    def empty(self):
-        """ Generate en empty DirIndex result, useful for full backup. """
-        return dict(directory=self._dir.path,
-                    files=[],
-                    subdirs=[],
-                    index={})
-
-
-class DiffIndex(DiffBase):
-    """ Compare two directory, and generate a DiffIndex, and compute deltas.
-
-    Everything is stored in JSON format when dumping to file.
-
-    The DiffIndex compares the current dir_index with cmp_index,
-    cmp_index should be the dir_index of the last diff/backup.
-
-    The diff is needed for patching/restoring.
-
-    :type diff_index: dict
-    :param: diff_index: DiffIndex data for the current version of the directory
-
-    :type cmp_index: dict
-    :param cmp_index: Old DirIndex for computing incremental changes
-
-    """
-    def __init__(self, dir_index, cmp_index):
-        self.dir_index = dir_index
-        self.cmp_index = cmp_index
-
-    def compute(self):
-        """ Actually compute the DirIndex data. """
-        data = {}
-        data['dir_index'] = self.dir_index
-        data['deleted'] = list(set(self.cmp_index['files']) - set(self.dir_index['files']))
-        data['created'] = list(set(self.dir_index['files']) - set(self.cmp_index['files']))
-        data['updated'] = []
-        data['deleted_dirs'] = list(set(self.cmp_index['subdirs']) - set(self.dir_index['subdirs']))
-        data['deltas'] = []
-        data['hashdir'] = dirtools.Dir(self.dir_index['directory']).hash()
-
-        for f in set(self.cmp_index['files']).intersection(set(self.dir_index['files'])):
-            # We cast the block checksums to list as pyrsync return tuple, and json list
-            if list(self.cmp_index['index'][f]) \
-                    != list(self.dir_index['index'][f]):
-                # We load the file to generate the delta against the old index
-                f_abs = open(dirtools.os.path.join(self.dir_index['directory'],
-                             f), 'rb')
-
-                # We store the delta in a temporary file,
-                # the file will be deleted when stored in the archives.
-                delta_tmp = tempfile.NamedTemporaryFile(delete=False)
-                delta_tmp.write(json.dumps(pyrsync.rsyncdelta(f_abs,
-                                                              self.cmp_index['index'][f])))
-                data['deltas'].append({'path': f,
-                                       'delta_path': delta_tmp.name})
-                data['updated'].append(f)
-                delta_tmp.close()
-
-        return data
-
-    def file_content(self):
-        return self.compute()
-
-
-def apply_diff(base_path, diff_index, diff_archive_dir,
-               diff_archive_key, volume_index):
-    """ Patch the directory base_path with diff_index/diff_archive,
-    apply the full diff.
-
-    :param diff_index: The DiffIndex data.
-    :param diff_archive: The DiffData archive corresponding to the DiffIndex.
-
-    Open the tarfile, and apply the updated, created, deleted,
-    deleted_dirs on base_path.
-
-    """
-    tar = tarvolume.open(diff_archive_dir, diff_archive_key,
-                         mode='r', volume_index=volume_index)
-    # First step, we iterate over the updated files
-    for updtd in diff_index['updated']:
-        try:
-            print(updtd)
-            abspath = os.path.join(base_path, updtd)
-
-            member = os.path.join('updated', get_hash(updtd))
-
-            # Load the pyrsync delta stored in JSON
-            delta_file = tar.extractfile(member)
-            delta = json.loads(delta_file.read())
-            delta_file.close()
-
-            # A tempfile file to store the patched file/result
-            # before replacing the original
-            patched = tempfile.NamedTemporaryFile()
-
-            # Patch the current version of the file with the delta
-            # and store the result in the previously created tempfile
-            with open(abspath, 'rb') as f:
-                pyrsync.patchstream(f, patched, delta)
-
-            patched.seek(0)
-
-            # Now we replace the orignal file with the patched version
-            with open(abspath, 'wb') as f:
-                shutil.copyfileobj(patched, f)
-
-            patched.close()
-
-        except KeyError as exc:
-            # It means that a file is missing in the archive.
-            log.exception(exc)
-            raise Exception("DIFF CORRUPTED")
-
-    # Next, we iterate the created files
-    for crtd in diff_index['created']:
-        try:
-            member = os.path.join('created', get_hash(crtd))  # tar.getmember()
-            src_file = tar.extractfile(member)
-
-            abspath = os.path.join(base_path, crtd)
-            dirname = os.path.dirname(abspath)
-
-            # Create directories if they doesn't exist yet
-            if not os.path.exists(dirname):
+                # Create directories if they doesn't exist yet
+                if not os.path.exists(dirname):
                     os.makedirs(dirname)
 
-            # We copy the file from the archive directly to its destination
-            with open(abspath, 'wb') as f:
-                shutil.copyfileobj(src_file, f)
+                # We copy the file from the archive directly to its destination
+                with open(abspath, 'wb') as f:
+                    shutil.copyfileobj(src_file, f)
 
-        except KeyError as exc:
-            # It means that a file is missing in the archive.
-            log.exception(exc)
-            raise Exception("DIFF CORRUPTED")
+            except KeyError as exc:
+                # It means that a file is missing in the archive.
+                log.exception(exc)
+                raise Exception("Diff seems corrupted.")
+            finally:
+                created_tar.close()
+
+    # Next, we iterate updated files in order to patch them
+    if diff['updated']:
+        for updtd in diff['updated']:
+            try:
+                updated_tar = tarfile.open(updated_archive, 'r:gz')
+
+                abspath = os.path.join(base_path, updtd)
+
+                # Load the librsync delta
+                delta_file = updated_tar.extractfile(updtd)
+
+                # A tempfile file to store the patched file/result
+                # before replacing the original
+                patched = tempfile.NamedTemporaryFile()
+
+                # Patch the current version of the file with the delta
+                # and store the result in the previously created tempfile
+                with open(abspath, 'rb') as f:
+                    librsync.patch(f, delta_file, patched)
+
+                patched.seek(0)
+
+                # Now we replace the orignal file with the patched version
+                with open(abspath, 'wb') as f:
+                    shutil.copyfileobj(patched, f)
+
+                patched.close()
+
+            except KeyError as exc:
+                # It means that a file is missing in the archive.
+                log.exception(exc)
+                raise Exception("Diff seems corrupted.")
+
+            finally:
+                updated_tar.close()
 
     # Then, we iterate the deleted files
-    for dltd in diff_index['deleted']:
-        print(dltd)
+    for dltd in diff['deleted']:
         abspath = os.path.join(base_path, dltd)
         if os.path.isfile(abspath):
             os.remove(abspath)
 
     # Finally, we iterate the deleted directories
-    for dltd_drs in diff_index['deleted_dirs']:
-        print(dltd_drs)
+    for dltd_drs in diff['deleted_dirs']:
         abspath = os.path.join(base_path, dltd_drs)
         if os.path.isdir(abspath):
             os.rmdir(abspath)
 
-    #tar.close()
 
-    try:
-        assert dirtools.Dir(base_path).hash() == diff_index['hashdir']
-    except AssertionError:
-        log.error("Diff integrity check failed.")
+def get_full_and_incremental(key, cache_path='.'):
+    """ From a directory as source, iterate over states files from a full backup,
+    till the end/or another full backup. The first item is actually the full backup. """
+    _dir = Dir(cache_path)
+    last_full = _dir.get('{0}.full.*'.format(key), sort_reverse=True)
+    last_full_date =  '.'.join(last_full.split('.')[-3:-1])
+    last_full_dt = datetime.strptime(last_full_date, '%Y-%m-%dT%H:%M:%S.%f')
+    previous_state = _dir.get('{0}.state.{1}.json'.format(key, last_full_date), sort_reverse=True)
+    yield last_full, None, last_full_dt
+
+    for s_file in _dir.files('{0}.state.*'.format(key)):
+        s_str = '.'.join(s_file.split('.')[-3:-1])
+        s_dt = datetime.strptime(s_str, '%Y-%m-%dT%H:%M:%S.%f')
+        if s_dt > last_full_dt and not _dir.get('{0}.full.{1}.tgz'.format(key, s_str)):
+            yield s_file, previous_state, s_dt
+            previous_state = s_file
 
 
-class DiffData(DiffBase):
-    """ Handle the archive creation for the DiffIndex.
+def restore_backup(key, dest, cache_path='.'):
+    """ Restore backups given the key to dest using cache_path as source
+    for state and deltas. """
+    for index, (state_file, previous_state_file, state_dt) in enumerate(get_full_and_incremental(key)):
+        if index == 0:
+            # At index == 0, state is the full archive
+            log.info('Restored full backup ({})'.format(state_dt))
+            tarfile.open(state_file, 'r:gz').extractall(dest)
+        else:
+            with open(state_file, 'rb') as f:
+                state = json.loads(f.read())
+            with open(previous_state_file, 'rb') as f:
+                previous_state = json.loads(f.read())
+            diff = compute_diff(state, previous_state)
+            _dir = Dir(cache_path)
+            patch_diff(dest, diff,
+                       _dir.get('{0}.created.{1}.tgz'.format(key, state_dt.isoformat())),
+                       _dir.get('{0}.updated.{1}.tgz'.format(key, state_dt.isoformat())))
+            log.info('Patched incremental backup ({})'.format(state_dt))
 
-    Take the DiffIndex data, and put needed files in an archive.
+# TODO: full backup list
+# TODO: gerer DT str pour restorer
+# TODO: gerer cache path
 
-    :type diff_index: dict
-    :param diff_index: DiffIndex.compute() result
+dest = '/home/thomas/omgaddest'
+cache_path = '.'
 
-    """
-    def __init__(self, diff_index):
-        self.diff_index = diff_index
+#print full_backup('/home/thomas/omgtxt2')
+#print incremental_backup('/home/thomas/omgtxt2')
 
-    def create_archive(self, archive_key):
-        # TODO utiliser TarVolume, et laisser la fonction sans
-        # TODO documenter et revoir le volume zie
-        # TODO faire une class full backuip
-        """ Actually create a tgz archive, with two directories:
-
-        - created, where the new files are stored.
-        - updated, contains the pyrsync deltas.
-
-        Everything is stored at root, with the hash of the path as filename.
-
-        :type archive_path: str
-        :param archive_path: Path to the archive
-
-        """
-        tar_volume = tarvolume.open('/tmp', archive_key=archive_key, mode='w')
-        #tar = tarfile.open(archive_path, mode='w:gz')
-        # Store the created files in the archive, in the created/ directory
-        for created in self.diff_index['created']:
-            path = os.path.join(self.diff_index['dir_index']['directory'],
-                                created)
-            filename = get_hash(created)
-            tar_volume.add(path, arcname=os.path.join('created/', filename))
-
-        # Store the delta in the archive, in the updated/ directory
-        for delta in self.diff_index['deltas']:
-            filename = get_hash(delta['path'])
-            arcname = os.path.join('updated/', filename)
-            # delta_path is the path to the tmpfile DiffIndex must have created
-            tar_volume.add(delta['delta_path'], arcname=arcname)
-            os.remove(delta['delta_path'])
-
-        tar_volume.close()
-
-        return tar_volume.volumes, tar_volume.volume_index
+restore_backup('omgtxt2', dest, cache_path)
