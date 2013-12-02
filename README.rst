@@ -9,8 +9,30 @@ Storage agnostic incremental backups tools, building blocks for creating increme
 
 This project is initially designed as a foundation for `bakthat <http://docs.bakthat.io>`_ incremental backups plugin, so the implementation of features like signature, encryption, storage, management of full/incremental backups is up to you.
 
+
 Components
 ==========
+
+Full Backup
+-----------
+
+A full backup results in three files:
+
+* SigVault
+* An archive containing your backups
+* A JSON file containing directory state
+
+
+Incremental Backup
+------------------
+
+An incremental backup results in 2-4 file depending on the changes:
+
+* SigVault
+* Archive containing created files if any
+* Archive containing deltas files if any
+* A JSON file containing directory state
+
 
 SigVault
 --------
@@ -20,6 +42,7 @@ A ``SigVault`` is a ``tarfile`` wrapper used to store files signatures, used lat
 A new one is created for each full/incremental backups, there are stored remotely but it's also saved in the cache, so we don't need to download them each time we want to perform a backup.
 
 When looking for a signature, a search is performed in each ``SigVault``, starting from the most recent until we found it.
+
 
 Installation
 ============
@@ -43,6 +66,7 @@ TODO
 ====
 
 * Delete old ``SigVault`` when a new full backup is performed.
+
 
 License (MIT)
 =============

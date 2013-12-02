@@ -13,11 +13,38 @@ import librsync
 from dirtools import Dir, DirState, compute_diff, filehash
 import sigvault
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 log = logging
 
 CACHE_PATH = '/home/thomas/.cache/bakthat'
+
+
+class FileFinder(object):
+    base_paths = [CACHE_PATH, tempfile.gettempdir()]
+
+    @classmethod
+    def make_key(cls, key_type, key, dt):
+        ext = 'tgz'
+        if key_type == 'state':
+            ext = 'json'
+
+        return '{0}.{1}.{2}.{3}'.format(key,
+                                        key_type,
+                                        dt.isoformat(),
+                                        ext)
+
+    @classmethod
+    def check(cls, path):
+        for bp in cls.base_paths:
+            abs_path = os.path.join(bp, path)
+            if os.path.exists(abs_path):
+                return abs_path
+
+    @classmethod
+    def check_key(cls, key_type, key, dt):
+        k = cls.make_key(key_type, key, dt)
+        return cls.check(k)
 
 
 def full_backup(path, cache_path=None):
@@ -26,18 +53,22 @@ def full_backup(path, cache_path=None):
 
     backup_date = datetime.utcnow()
     backup_dir = Dir(path)
+    backup_key = backup_dir.path.strip('/').split('/')[-1]
 
     backup_dir_state = DirState(backup_dir)
     state_file = backup_dir_state.to_json(cache_path, dt=backup_date, fmt='{0}.state.{1}.json')
 
-    created_file = '{0}.full.{1}.tgz'.format(backup_dir.path.strip('/').split('/')[-1],
-                                             backup_date.isoformat())
+    created_file = FileFinder.make_key('full',
+                                       backup_key,
+                                       backup_date)
+
     created_file = os.path.join(cache_path, created_file)
     backup_dir.compress_to(created_file)
 
     # Create a new SigVault
-    sigvault_file = '{0}.sigvault.{1}.tgz'.format(backup_dir.path.strip('/').split('/')[-1],
-                                                  backup_date.isoformat())
+    sigvault_file = FileFinder.make_key('sigvault',
+                                        backup_key,
+                                        backup_date)
     sigvault_file = os.path.join(CACHE_PATH, sigvault_file)
 
     sv = sigvault.open_vault(sigvault_file, 'w', base_path=backup_dir.path)
@@ -47,12 +78,17 @@ def full_backup(path, cache_path=None):
 
     sv.close()
 
-    return {'backup_date': backup_date, 'files': [state_file, created_file, sigvault_file]}
+    files = [state_file, created_file, sigvault_file]
+    files = [{'path': f, 'size': os.path.getsize(f)} for f in files]
+
+    return {'backup_key': backup_key, 'backup_date': backup_date, 'files': files}
 
 
 def incremental_backup(path, cache_path=None):
     if cache_path is None:
         cache_path = tempfile.gettempdir()
+
+    files = []
 
     backup_date = datetime.utcnow()
     backup_dir = Dir(path)
@@ -69,32 +105,46 @@ def incremental_backup(path, cache_path=None):
     diff = current_state - last_state
 
     state_file = current_state.to_json(cache_path, dt=backup_date, fmt='{0}.state.{1}.json')
+    files.append(state_file)
 
-    created_file = '{0}.created.{1}.tgz'.format(backup_key,
-                                                backup_date.isoformat())
+    created_file = FileFinder.make_key('created',
+                                       backup_key,
+                                       backup_date)
     created_file = os.path.join(cache_path, created_file)
+    # Store files from diff['created'] into a new archive
     created_file = process_created(created_file,
                                    diff['created'],
                                    backup_dir.path)
+    if created_file:
+        files.append(created_file)
 
-    updated_file = '{0}.updated.{1}.tgz'.format(backup_key,
-                                                backup_date.isoformat())
+    updated_file = FileFinder.make_key('updated',
+                                       backup_key,
+                                       backup_date)
     updated_file = os.path.join(cache_path, updated_file)
+
+    # Compute and store delta from the list of updated files
     updated_file = process_updated(updated_file,
                                    diff['updated'],
                                    backup_dir.path,
                                    last_sv)
+    if updated_file:
+        files.append(updated_file)
 
     if diff['created'] or diff['updated']:
-        sigvault_file = '{0}.sigvault.{1}.tgz'.format(backup_key,
-                                                      backup_date.isoformat())
+        sigvault_file = FileFinder.make_key('sigvault',
+                                            backup_key,
+                                            backup_date)
 
-        new_sv = sigvault.open_vault(os.path.join(CACHE_PATH, sigvault_file), 'w', base_path=backup_dir.path)
+        sigvault_file = os.path.join(CACHE_PATH, sigvault_file)
+        new_sv = sigvault.open_vault(sigvault_file, 'w', base_path=backup_dir.path)
         for f in itertools.chain(diff['created'], diff['updated']):
             new_sv.add(f)
         new_sv.close()
+        files.append(sigvault_file)
 
-    return state_file, created_file, updated_file
+    files = [{'path': f, 'size': os.path.getsize(f)} for f in files]
+    return {'backup_key': backup_key, 'backup_date': backup_date, 'files': files}
 
 
 def process_created(path, created, base_path):
@@ -203,6 +253,12 @@ def patch_diff(base_path, diff, created_archive=None, updated_archive=None):
             os.rmdir(abspath)
 
 
+def _extract_dt_from_key(key):
+    key_date =  '.'.join(key.split('.')[-3:-1])
+    key_dt = datetime.strptime(key_date, '%Y-%m-%dT%H:%M:%S.%f')
+    return key_date, key_dt
+
+
 def get_full_and_incremental(key, cache_path=None):
     """ From a directory as source, iterate over states files from a full backup,
     till the end/or another full backup. The first item is actually the full backup. """
@@ -211,15 +267,14 @@ def get_full_and_incremental(key, cache_path=None):
 
     _dir = Dir(cache_path)
     last_full = _dir.get('{0}.full.*'.format(key), sort_reverse=True, abspath=True)
-    last_full_date =  '.'.join(last_full.split('.')[-3:-1])
-    last_full_dt = datetime.strptime(last_full_date, '%Y-%m-%dT%H:%M:%S.%f')
-    previous_state = _dir.get('{0}.state.{1}.json'.format(key, last_full_date), sort_reverse=True, abspath=True)
+    last_full_date, last_full_dt = _extract_dt_from_key(last_full)
+    previous_state = FileFinder.check_key('state', key, last_full_dt)
     yield last_full, None, last_full_dt
 
     for s_file in _dir.files('{0}.state.*'.format(key)):
         s_str = '.'.join(s_file.split('.')[-3:-1])
         s_dt = datetime.strptime(s_str, '%Y-%m-%dT%H:%M:%S.%f')
-        if s_dt > last_full_dt and not _dir.get('{0}.full.{1}.tgz'.format(key, s_str)):
+        if s_dt > last_full_dt and not FileFinder.check_key('full', key, s_dt):
             yield s_file, previous_state, s_dt
             previous_state = s_file
 
@@ -243,13 +298,27 @@ def restore_backup(key, dest, cache_path=None):
             diff = compute_diff(state, previous_state)
             _dir = Dir(cache_path)
             patch_diff(dest, diff,
-                       _dir.get('{0}.created.{1}.tgz'.format(key, state_dt.isoformat())),
-                       _dir.get('{0}.updated.{1}.tgz'.format(key, state_dt.isoformat())))
+                       FileFinder.check_key('created', key, state_dt),
+                       FileFinder.check_key('updated', key, state_dt))
             log.info('Patched incremental backup ({})'.format(state_dt))
 
+    return dest
+
+
+def get_full_backups(key, cache_path=None):
+    if cache_path is None:
+        cache_path = tempfile.gettempdir()
+
+    _dir = Dir(cache_path)
+    fulls = _dir.files('{0}.full.*'.format(key), sort_reverse=True, abspath=True)
+    fulls = [_extract_dt_from_key(k)[1] for k in fulls]
+    return fulls
+
+#full = get_full_backups('tonality-gamma')
+#k = FileFinder.check_key('state', 'tonality-gamma', full[0])
+#print full
 # TODO: full backup list
 # TODO: gerer DT str pour restorer
-
-#print full_backup('/work/writing')
+#print full_backup('/topica/tonality-gamma')
 #print incremental_backup('/home/thomas/omgtxt2')
 #print restore_backup('writing', '/tmp/writing_restored')
