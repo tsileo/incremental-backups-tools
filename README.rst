@@ -18,7 +18,7 @@ Full Backup
 
 A full backup results in three files:
 
-* SigVault
+* A SigVault archive (stored in your cache, but also uploaded)
 * An archive containing your backups
 * A JSON file containing directory state
 
@@ -28,9 +28,9 @@ Incremental Backup
 
 An incremental backup results in 2-4 file depending on the changes:
 
-* SigVault
-* Archive containing created files if any
-* Archive containing deltas files if any
+* A SigVault archive (stored in your cache, but also uploaded)
+* An archive containing created files if any
+* An archive containing deltas files if any
 * A JSON file containing directory state
 
 
@@ -56,16 +56,32 @@ Installation
 Usage
 =====
 
+
 .. code-block:: python
 
-    from incremental_backups_tools.diff import DirIndex, DiffIndex, DiffData, apply_diff
-    from dirtools import Dir
+    from incremental_backups_tools import full_backup, incremental_backup, restore_backup
+
+    backups_files_report = full_backup('/path/to/backup')
+
+    # After some times
+    backups_files_report = incremental_backup('/path/to/backup')
+
+    # Something happened, you must restore from all the archives
+    restore_backup('backup', '/path/to/backup_restored')
+
+
+Everything is store in your default temporary directory, but you can set a different directory:
+
+.. code-block::
+
+    $ export TMP=/my/new/tmp/dir
 
 
 TODO
 ====
 
 * Delete old ``SigVault`` when a new full backup is performed.
+* Restore oldest backup (match a datetime for selecting full backup to start with)
 
 
 License (MIT)

@@ -9,15 +9,17 @@ import json
 import itertools
 
 import librsync
+from dirtools import Dir, DirState, compute_diff
 
-from dirtools import Dir, DirState, compute_diff, filehash
 import sigvault
 
 logging.basicConfig(level=logging.INFO)
 
 log = logging
 
-CACHE_PATH = '/home/thomas/.cache/bakthat'
+CACHE_PATH = os.path.expanduser('~/.cache/bakthat')
+if not os.path.exists(CACHE_PATH):
+    os.makedirs(CACHE_PATH)
 
 
 class FileFinder(object):
@@ -80,8 +82,9 @@ def full_backup(path, cache_path=None):
 
     files = [state_file, created_file, sigvault_file]
     files = [{'path': f, 'size': os.path.getsize(f)} for f in files]
+    total = sum([f['size'] for f in files])
 
-    return {'backup_key': backup_key, 'backup_date': backup_date, 'files': files}
+    return {'backup_key': backup_key, 'backup_date': backup_date, 'files': files, 'total': total}
 
 
 def incremental_backup(path, cache_path=None):
@@ -144,11 +147,13 @@ def incremental_backup(path, cache_path=None):
         files.append(sigvault_file)
 
     files = [{'path': f, 'size': os.path.getsize(f)} for f in files]
-    return {'backup_key': backup_key, 'backup_date': backup_date, 'files': files}
+    total = sum([f['size'] for f in files])
+
+    return {'backup_key': backup_key, 'backup_date': backup_date, 'files': files, 'total': total}
 
 
 def process_created(path, created, base_path):
-    """ Put new file in a new archive. """
+    """ Put new files in a new archive. """
     if created:
         created_archive = tarfile.open(path, 'w:gz')
         for f in created:
@@ -296,7 +301,6 @@ def restore_backup(key, dest, cache_path=None):
             with open(previous_state_file, 'rb') as f:
                 previous_state = json.loads(f.read())
             diff = compute_diff(state, previous_state)
-            _dir = Dir(cache_path)
             patch_diff(dest, diff,
                        FileFinder.check_key('created', key, state_dt),
                        FileFinder.check_key('updated', key, state_dt))
@@ -313,12 +317,3 @@ def get_full_backups(key, cache_path=None):
     fulls = _dir.files('{0}.full.*'.format(key), sort_reverse=True, abspath=True)
     fulls = [_extract_dt_from_key(k)[1] for k in fulls]
     return fulls
-
-#full = get_full_backups('tonality-gamma')
-#k = FileFinder.check_key('state', 'tonality-gamma', full[0])
-#print full
-# TODO: full backup list
-# TODO: gerer DT str pour restorer
-#print full_backup('/topica/tonality-gamma')
-#print incremental_backup('/home/thomas/omgtxt2')
-#print restore_backup('writing', '/tmp/writing_restored')
